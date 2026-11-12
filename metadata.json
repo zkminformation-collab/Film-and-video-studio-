@@ -1,0 +1,9 @@
+{
+  "name": "Film & Video Studio",
+  "description": "Professional all-in-one studio platform for film production, video editing, screenplay writing, storyboarding, live camera recording, audio design, animation, VFX, and AI creation.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
