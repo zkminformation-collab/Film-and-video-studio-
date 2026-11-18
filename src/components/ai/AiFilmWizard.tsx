@@ -64,7 +64,18 @@ export const AiFilmWizard: React.FC<AiFilmWizardProps> = ({ activeFilm, onOpenEd
   const [progressPercent, setProgressPercent] = useState(0);
 
   // Form Inputs & Outline Scope
-  const [promptText, setPromptText] = useState('Create a 20-minute Kannada animated adventure film about a courageous young astronomer who discovers an ancient celestial clock beneath a forgotten desert observatory.');
+  const [promptText, setPromptText] = useState(() => {
+    try {
+      const queuedPrompt = localStorage.getItem('fvs_active_flow_prompt');
+      if (queuedPrompt) {
+        localStorage.removeItem('fvs_active_flow_prompt');
+        return queuedPrompt;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return 'Create a 20-minute Kannada animated adventure film about a courageous young astronomer who discovers an ancient celestial clock beneath a forgotten desert observatory.';
+  });
   const [language, setLanguage] = useState('Kannada (ಕನ್ನಡ)');
   const [targetSceneCount, setTargetSceneCount] = useState<number>(100);
   const [targetDuration, setTargetDuration] = useState('20 minutes (100 Scenes)');
@@ -83,6 +94,12 @@ export const AiFilmWizard: React.FC<AiFilmWizardProps> = ({ activeFilm, onOpenEd
   const [isGeneratingScreenplay, setIsGeneratingScreenplay] = useState(false);
   const [isGeneratingStoryboard, setIsGeneratingStoryboard] = useState(false);
   const [storyboardPanels, setStoryboardPanels] = useState<any[]>([]);
+  const [wizardNotice, setWizardNotice] = useState<string>('');
+
+  const showWizardNotice = (msg: string) => {
+    setWizardNotice(msg);
+    setTimeout(() => setWizardNotice((prev) => (prev === msg ? '' : prev)), 4000);
+  };
 
   // Fetch initial film project and provider status on mount
   useEffect(() => {
@@ -233,7 +250,7 @@ export const AiFilmWizard: React.FC<AiFilmWizardProps> = ({ activeFilm, onOpenEd
           ...prev,
           screenplay: data.screenplay,
         }));
-        alert(`Retrieved saved screenplay for "${data.title}"!`);
+        showWizardNotice(`Retrieved saved screenplay for "${data.title}".`);
       }
     } catch (e) {
       console.error('Failed to retrieve screenplay:', e);
@@ -280,7 +297,7 @@ export const AiFilmWizard: React.FC<AiFilmWizardProps> = ({ activeFilm, onOpenEd
     });
 
     soundFx.playCinematicImpact();
-    alert(`Scene ${index + 1} regenerated and updated with continuity lock!`);
+    showWizardNotice(`Scene ${index + 1} regenerated and updated with continuity lock.`);
   };
 
   // Master Render Simulation
@@ -782,10 +799,12 @@ export const AiFilmWizard: React.FC<AiFilmWizardProps> = ({ activeFilm, onOpenEd
                 </div>
 
                 <button
-                  onClick={() => alert(`Appearance seed locked for ${char.name}. All 100 scenes will maintain this visual reference.`)}
+                  onClick={() =>
+                    showWizardNotice(`Appearance seed locked for ${char.name}. All scenes keep this visual reference.`)
+                  }
                   className="w-full py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg text-xs font-mono border border-slate-700"
                 >
-                  Verify Seed Continuity
+                  {wizardNotice ? wizardNotice : 'Verify Seed Continuity'}
                 </button>
               </div>
             ))}
@@ -1088,13 +1107,32 @@ export const AiFilmWizard: React.FC<AiFilmWizardProps> = ({ activeFilm, onOpenEd
             <button
               onClick={() => {
                 soundFx.playShutterSound();
-                alert('Subtitles exported in standard .SRT format!');
+                const cues = filmBlueprint?.subtitles || [
+                  { start: '00:00:01,000', end: '00:00:05,000', text: 'VALERIE: Telemetry confirmed... the frequency is alive!' },
+                  { start: '00:00:06,000', end: '00:00:10,000', text: 'ARYA-7: Commander, this gateway connects to the core sector.' },
+                ];
+                const srtText = cues
+                  .map((c: any, idx: number) => `${idx + 1}\n${c.start} --> ${c.end}\n${c.text}\n`)
+                  .join('\n');
+                const blob = new Blob([srtText], { type: 'text/plain;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${(filmBlueprint?.title || 'Film_Subtitles').replace(/\s+/g, '_')}.srt`;
+                a.click();
+                URL.revokeObjectURL(url);
+                showWizardNotice('Subtitles exported in standard .SRT format.');
               }}
               className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-slate-700 rounded-lg text-xs font-mono"
             >
               Export .SRT File
             </button>
           </div>
+          {wizardNotice && (
+            <div className="text-xs font-mono text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-1.5">
+              {wizardNotice}
+            </div>
+          )}
 
           <div className="space-y-2.5">
             {(filmBlueprint?.subtitles || [

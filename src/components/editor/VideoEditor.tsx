@@ -57,7 +57,7 @@ interface VideoTrackMeta {
 }
 
 export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
-  const { wallet, requestCostApproval, addQueueItem } = useStudioAi();
+  const { wallet, requestCostApproval, addQueueItem, queuedEditorClips, consumeQueuedEditorClips } = useStudioAi();
 
   const [clips, setClips] = useState<TimelineClip[]>(INITIAL_TIMELINE_CLIPS);
   const [selectedClipId, setSelectedClipId] = useState<string | null>('clip-1');
@@ -114,7 +114,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
       }
 
       if (!scenes || scenes.length === 0) {
-        alert('No scenes found in this film project yet. Please generate scenes in AI Film Maker first.');
+        setImportedFilmInfo('No scenes generated yet — use AI Film Maker or Asset Library');
         return;
       }
 
@@ -196,6 +196,32 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
       handleLoadFilmScenes(activeFilm);
     }
   }, [activeFilm.id, activeFilm.scenes?.length]);
+
+  // Consume assets sent from the Unified Asset Library
+  useEffect(() => {
+    if (queuedEditorClips.length > 0) {
+      const incoming = consumeQueuedEditorClips();
+      if (incoming.length > 0) {
+        setClips((prev) => {
+          const updated = [...prev];
+          incoming.forEach((clip) => {
+            const trackClips = updated.filter((c) => c.trackId === clip.trackId);
+            const trackEnd = trackClips.reduce((max, c) => Math.max(max, c.start + c.duration), 0);
+            updated.push({
+              ...clip,
+              start: trackEnd > 0 ? trackEnd : Math.max(0, Math.round(currentTime)),
+            });
+          });
+          const maxEnd = updated.reduce((max, c) => Math.max(max, c.start + c.duration), totalDuration);
+          setTotalDuration(Math.max(24, maxEnd));
+          return updated;
+        });
+        setSelectedClipId(incoming[incoming.length - 1].id);
+        setImportedFilmInfo(`Added "${incoming[incoming.length - 1].name}" from Library`);
+        soundFx.playCinematicImpact();
+      }
+    }
+  }, [queuedEditorClips.length]);
 
   // Handle Playback Loop
   useEffect(() => {
@@ -930,7 +956,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
                     className="p-2.5 bg-[#090b11] border border-purple-500/20 rounded-xl space-y-1 hover:border-cyan-400 transition-colors cursor-pointer"
                     onClick={() => {
                       soundFx.playWhoosh();
-                      alert(`Transition "${trans.name}" applied between clips at playhead.`);
+                      setImportedFilmInfo(`Transition "${trans.name}" (${trans.dur}) applied at playhead.`);
                     }}
                   >
                     <div className="font-bold text-white text-xs">{trans.name}</div>
@@ -961,7 +987,14 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
                   <button
                     onClick={() => {
                       soundFx.playCinematicImpact();
-                      alert('ProRes 422 HQ 4K render queued in background!');
+                      addQueueItem({
+                        tool: 'Video Editor Master Render',
+                        prompt: `${activeFilm.title} — Cinema DCI 4K ProRes 422 HQ`,
+                        provider: 'Cloud GPU Node (H.265 / ProRes)',
+                        status: 'Completed',
+                        progress: 100,
+                      });
+                      setImportedFilmInfo('Cinema DCI 4K Master queued and verified.');
                     }}
                     className="w-full mt-2 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg font-bold text-xs shadow-md"
                   >
@@ -978,7 +1011,14 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
                   <button
                     onClick={() => {
                       soundFx.playScannerBeep();
-                      alert('YouTube 4K export started!');
+                      addQueueItem({
+                        tool: 'YouTube 4K MP4 Render',
+                        prompt: `${activeFilm.title} — 3840x2160 Rec.709 MP4`,
+                        provider: 'FFmpeg H.264 / H.265 Node',
+                        status: 'Completed',
+                        progress: 100,
+                      });
+                      setImportedFilmInfo('Web & YouTube 4K preset dispatched to Render Queue.');
                     }}
                     className="w-full mt-2 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 rounded-lg font-bold text-xs"
                   >
@@ -995,7 +1035,14 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
                   <button
                     onClick={() => {
                       soundFx.playScannerBeep();
-                      alert('Vertical Reel exported!');
+                      addQueueItem({
+                        tool: 'Vertical 9:16 Reel Export',
+                        prompt: `${activeFilm.title} — 1080x1920 MP4`,
+                        provider: 'FFmpeg H.264 Node',
+                        status: 'Completed',
+                        progress: 100,
+                      });
+                      setImportedFilmInfo('Vertical 9:16 MP4 export queued.');
                     }}
                     className="w-full mt-2 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 rounded-lg font-bold text-xs"
                   >

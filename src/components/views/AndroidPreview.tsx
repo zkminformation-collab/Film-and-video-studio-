@@ -33,6 +33,12 @@ export const AndroidPreview: React.FC<AndroidPreviewProps> = ({ activeFilm }) =>
   const [activeTab, setActiveTab] = useState<'home' | 'editor' | 'camera' | 'script' | 'more'>('editor');
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeMobileLut, setActiveMobileLut] = useState<'Teal & Orange' | 'Cyberpunk' | 'Noir'>('Teal & Orange');
+  const [mobileToast, setMobileToast] = useState<string>('');
+
+  const showMobileToast = (msg: string) => {
+    setMobileToast(msg);
+    setTimeout(() => setMobileToast((prev) => (prev === msg ? '' : prev)), 3000);
+  };
 
   return (
     <div className="flex-1 overflow-y-auto p-6 bg-[#090b11] text-slate-100 flex flex-col items-center justify-center">
@@ -70,11 +76,13 @@ export const AndroidPreview: React.FC<AndroidPreviewProps> = ({ activeFilm }) =>
           {/* Android App Top Bar (Material 3 TopAppBar in Modern Creative Studio) */}
           <div className="h-12 px-4 border-b border-purple-500/20 bg-[#0d111c] flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-md bg-purple-600/30 border border-purple-500/40 flex items-center justify-center text-purple-400">
-                <Clapperboard className="w-3.5 h-3.5" />
-              </div>
+              <img
+                src="/images/zkmap-studio-logo.png"
+                alt="ZKMAP STUDIO"
+                className="h-6 w-auto rounded object-contain border border-purple-500/40"
+              />
               <span className="text-xs font-bold text-white font-cinzel tracking-wider">
-                Film & Video Studio
+                ZKMAP STUDIO
               </span>
             </div>
             <span className="text-[10px] text-cyan-300 font-mono bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-500/30 font-bold">
@@ -149,7 +157,7 @@ export const AndroidPreview: React.FC<AndroidPreviewProps> = ({ activeFilm }) =>
                   <button
                     onClick={() => {
                       soundFx.playSlateBeep();
-                      alert('Slate take logged in Android Room SQLite DB!');
+                      showMobileToast('Slate take logged in Android Room SQLite DB.');
                     }}
                     className="p-3 bg-[#0d111c] hover:bg-slate-900 border border-purple-500/30 rounded-xl text-left space-y-1 transition-all"
                   >
@@ -161,7 +169,7 @@ export const AndroidPreview: React.FC<AndroidPreviewProps> = ({ activeFilm }) =>
                   <button
                     onClick={() => {
                       soundFx.playCinematicImpact();
-                      alert('Render started on Android Media3 / FFmpeg pipeline!');
+                      showMobileToast('Render started on Android Media3 / FFmpeg pipeline.');
                     }}
                     className="p-3 bg-[#0d111c] hover:bg-slate-900 border border-purple-500/30 rounded-xl text-left space-y-1 transition-all"
                   >
@@ -170,6 +178,11 @@ export const AndroidPreview: React.FC<AndroidPreviewProps> = ({ activeFilm }) =>
                     <div className="text-[10px] text-slate-400">Direct Share</div>
                   </button>
                 </div>
+                {mobileToast && (
+                  <div className="text-[11px] font-mono text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-2.5 py-1.5">
+                    {mobileToast}
+                  </div>
+                )}
               </div>
             )}
 
@@ -250,13 +263,18 @@ export const AndroidPreview: React.FC<AndroidPreviewProps> = ({ activeFilm }) =>
                 <button
                   onClick={() => {
                     soundFx.playCinematicImpact();
-                    alert('Mobile AI Text-to-Video generation sent to Cloud GPU worker queue!');
+                    showMobileToast('Mobile AI Text-to-Video shot sent to GPU worker queue.');
                   }}
                   className="w-full py-2.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 text-white rounded-xl font-bold font-mono text-xs flex items-center justify-center gap-1.5 shadow-md shadow-purple-600/30"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>AI Shot Direct Inject</span>
                 </button>
+                {mobileToast && (
+                  <div className="text-[11px] font-mono text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-2.5 py-1.5">
+                    {mobileToast}
+                  </div>
+                )}
               </div>
             )}
 

@@ -37,7 +37,9 @@ export const AiCentralManager: React.FC = () => {
     wallet,
     isReprocessing,
     reprocessStatusText,
+    recheckPendingQueue,
     reprocessAllPending,
+    reprocessAllPrompts,
     retryQueueItem,
     clearCompletedQueue
   } = useStudioAi();
@@ -140,23 +142,30 @@ export const AiCentralManager: React.FC = () => {
         {/* Action Buttons: Check Pending & Reprocess All */}
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
           <button
-            onClick={() => {
-              soundFx.playScannerBeep();
-              alert(`Queue scan complete: ${pendingCount} pending task(s) currently waiting in worker queue.`);
-            }}
+            onClick={() => recheckPendingQueue()}
             className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 rounded-xl text-xs font-mono font-medium transition-colors"
           >
             Check Pending ({pendingCount})
           </button>
 
           <button
-            disabled={isReprocessing || pendingCount === 0}
+            disabled={isReprocessing}
             onClick={() => reprocessAllPending()}
             className="px-5 py-2.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 hover:from-purple-500 hover:to-cyan-400 disabled:opacity-50 text-white rounded-xl text-xs font-bold font-mono shadow-lg shadow-purple-600/30 transition-all flex items-center gap-2 active:scale-95"
-            title="Batch process all pending queue tasks sequentially"
+            title="Batch process all pending queue tasks & verify all film production pipelines"
           >
             <RotateCcw className={`w-3.5 h-3.5 ${isReprocessing ? 'animate-spin' : ''}`} />
-            <span>{isReprocessing ? 'Reprocessing Queue...' : 'Reprocess All Pending'}</span>
+            <span>{isReprocessing ? 'Reprocessing Queue...' : pendingCount > 0 ? `Reprocess All Pending (${pendingCount})` : 'Reprocess & Verify All'}</span>
+          </button>
+
+          <button
+            disabled={isReprocessing}
+            onClick={() => reprocessAllPrompts()}
+            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-cyan-300 border border-cyan-500/40 rounded-xl text-xs font-bold font-mono transition-all flex items-center gap-2 active:scale-95"
+            title="Dispatch and reprocess all studio prompts and pending jobs"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Reprocess All Prompts</span>
           </button>
 
           {completedCount > 0 && (

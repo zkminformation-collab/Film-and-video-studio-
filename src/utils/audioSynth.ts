@@ -2,7 +2,7 @@
 class AudioEngine {
   private ctx: AudioContext | null = null;
   private isUnlocked = false;
-  private scoreNodes: { oscs: OscillatorNode[]; gain: GainNode } | null = null;
+  private scoreNodes: { oscs: OscillatorNode[]; gain: GainNode; panner?: StereoPannerNode } | null = null;
   private scoreInterval: any = null;
 
   constructor() {
@@ -591,13 +591,25 @@ class AudioEngine {
   }
 
   // Real Real-time Orchestral Score Synthesizer for Timeline Playback
-  startScorePlayback(volume: number = 0.5) {
-    if (this.scoreNodes) return; // Already playing
+  startScorePlayback(volume: number = 0.5, pan: number = 0) {
+    if (this.scoreNodes) {
+      this.setLiveScoreGain(volume);
+      this.setLiveScorePan(pan);
+      return;
+    }
     try {
       const ctx = this.getContext();
       const masterGain = ctx.createGain();
       masterGain.gain.setValueAtTime(Math.min(1, Math.max(0, volume)), ctx.currentTime);
-      masterGain.connect(ctx.destination);
+
+      const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : undefined;
+      if (panner) {
+        panner.pan.setValueAtTime(Math.min(1, Math.max(-1, pan / 50)), ctx.currentTime);
+        masterGain.connect(panner);
+        panner.connect(ctx.destination);
+      } else {
+        masterGain.connect(ctx.destination);
+      }
 
       // Low pass warm cinematic filter
       const filter = ctx.createBiquadFilter();
@@ -646,10 +658,26 @@ class AudioEngine {
         filter.frequency.exponentialRampToValueAtTime(500 + Math.random() * 350, now + 1.5);
       }, 3500);
 
-      this.scoreNodes = { oscs, gain: masterGain };
+      this.scoreNodes = { oscs, gain: masterGain, panner };
     } catch (e) {
       console.warn('Score playback error:', e);
     }
+  }
+
+  setLiveScoreGain(volume: number) {
+    if (!this.scoreNodes || !this.ctx) return;
+    try {
+      const clamped = Math.min(1, Math.max(0, volume));
+      this.scoreNodes.gain.gain.setTargetAtTime(clamped, this.ctx.currentTime, 0.03);
+    } catch (_) {}
+  }
+
+  setLiveScorePan(pan: number) {
+    if (!this.scoreNodes?.panner || !this.ctx) return;
+    try {
+      const clamped = Math.min(1, Math.max(-1, pan / 50));
+      this.scoreNodes.panner.pan.setTargetAtTime(clamped, this.ctx.currentTime, 0.03);
+    } catch (_) {}
   }
 
   stopScorePlayback() {
@@ -741,47 +769,120 @@ class AudioEngine {
     }
   }
 
-  // Robust Text-to-Speech synthesizer with speech synthesis + audio carrier tone
+  // Expressive formant-modulated vocal cadence when OS speechSynthesis voice is unavailable
+  private playFormantVocalCadence(
+    text: string,
+    pitch: number = 1.0,
+    rate: number = 1.0,
+    isKannada: boolean = false,
+    onEnd?: () => void
+  ) {
+    try {
+      const ctx = this.getContext();
+      const syllables = Math.min(18, Math.max(4, Math.ceil(text.trim().length / 5)));
+      const stepSec = Math.max(0.11, 0.16 / Math.max(0.6, rate));
+      const baseFreq = (isKannada ? 172 : 160) * Math.max(0.6, Math.min(1.8, pitch));
+      const now = ctx.currentTime;
+
+      for (let i = 0; i < syllables; i++) {
+        const t = now + i * stepSec;
+        const osc = ctx.createOscillator();
+        const formant = ctx.createBiquadFilter();
+        const gain = ctx.createGain();
+
+        const intonation = Math.sin((i / Math.max(1, syllables - 1)) * Math.PI) * 26 + ((i % 3) - 1) * 10;
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(baseFreq + intonation, t);
+
+        formant.type = 'bandpass';
+        formant.frequency.setValueAtTime(isKannada ? 680 + (i % 4) * 190 : 750 + (i % 4) * 220, t);
+        formant.Q.setValueAtTime(3.2, t);
+
+        gain.gain.setValueAtTime(0.001, t);
+        gain.gain.linearRampToValueAtTime(0.24, t + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.002, t + stepSec * 0.92);
+
+        osc.connect(formant);
+        formant.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(t);
+        osc.stop(t + stepSec * 0.95);
+      }
+
+      const totalMs = Math.round(syllables * stepSec * 1000) + 120;
+      setTimeout(() => {
+        if (onEnd) onEnd();
+      }, totalMs);
+    } catch (_) {
+      if (onEnd) onEnd();
+    }
+  }
+
+  private resolveSpeechLang(lang: string): { bcp47: string; isNonEnglish: boolean } {
+    const l = lang.toLowerCase();
+    if (l.includes('kannada') || l.includes('kn')) return { bcp47: 'kn-IN', isNonEnglish: true };
+    if (l.includes('hindi') || l.includes('hi')) return { bcp47: 'hi-IN', isNonEnglish: true };
+    if (l.includes('tamil') || l.includes('ta')) return { bcp47: 'ta-IN', isNonEnglish: true };
+    if (l.includes('telugu') || l.includes('te')) return { bcp47: 'te-IN', isNonEnglish: true };
+    return { bcp47: 'en-US', isNonEnglish: false };
+  }
+
+  // Clean Text-to-Speech via native browser SpeechSynthesis (never emits synthetic humming/buzzing)
   speakDialogue(
-    text: string, 
-    lang: string = 'en-US', 
-    pitch: number = 1.0, 
-    rate: number = 1.0, 
+    text: string,
+    lang: string = 'en-US',
+    pitch: number = 1.0,
+    rate: number = 1.0,
     onEnd?: () => void
   ) {
     this.unlock();
 
-    // Play subtle audio carrier chime so the user immediately hears sound
-    this.playScannerBeep();
+    const { bcp47 } = this.resolveSpeechLang(lang);
+    const shortLang = bcp47.split('-')[0];
 
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
 
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.pitch = Math.max(0.5, Math.min(2.0, pitch));
-        utterance.rate = Math.max(0.5, Math.min(2.0, rate));
-
-        // Auto-detect language voice
-        const isKannada = lang.toLowerCase().includes('kannada') || lang.includes('kn');
-        utterance.lang = isKannada ? 'kn-IN' : 'en-US';
-
         const voices = window.speechSynthesis.getVoices();
-        if (voices && voices.length > 0) {
-          const matchingVoice = voices.find((v) => 
-            isKannada ? v.lang.startsWith('kn') || v.name.includes('Kannada') : v.lang.startsWith('en')
-          );
-          if (matchingVoice) {
-            utterance.voice = matchingVoice;
-          }
+        const matchingVoice =
+          voices.find((v) => v.lang.toLowerCase() === bcp47.toLowerCase()) ||
+          voices.find(
+            (v) =>
+              v.lang.toLowerCase().startsWith(shortLang) ||
+              v.name.toLowerCase().includes(lang.toLowerCase().split(' ')[0])
+          ) ||
+          voices.find((v) => v.default) ||
+          voices[0];
+
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.pitch = Math.max(0.6, Math.min(1.6, pitch));
+        utterance.rate = Math.max(0.6, Math.min(1.6, rate));
+        utterance.lang = matchingVoice?.lang || bcp47;
+        if (matchingVoice) {
+          utterance.voice = matchingVoice;
         }
 
-        utterance.onend = () => {
+        let settled = false;
+        const finishOnce = () => {
+          if (settled) return;
+          settled = true;
           if (onEnd) onEnd();
         };
 
+        const watchdog = setTimeout(() => {
+          finishOnce();
+        }, 12000);
+
+        utterance.onend = () => {
+          clearTimeout(watchdog);
+          finishOnce();
+        };
+
         utterance.onerror = () => {
-          if (onEnd) onEnd();
+          clearTimeout(watchdog);
+          finishOnce();
         };
 
         window.speechSynthesis.speak(utterance);
@@ -791,24 +892,128 @@ class AudioEngine {
       }
     }
 
-    // Fallback: Web Audio melodic vocal simulation
+    if (onEnd) onEnd();
+  }
+
+  // Generate a real downloadable 16-bit PCM WAV file for any English or Kannada voice clip
+  generateDialogueWavBlob(
+    text: string,
+    lang: string = 'en-US',
+    pitch: number = 1.0,
+    rate: number = 1.0
+  ): Blob {
+    const sampleRate = 22050;
+    const isKannada = lang.toLowerCase().includes('kannada') || lang.toLowerCase().includes('kn');
+    const words = Math.max(2, text.trim().split(/\s+/).length);
+    const durationSec = Math.min(8, Math.max(1.8, (words * 0.42) / Math.max(0.6, rate)));
+    const numSamples = Math.floor(sampleRate * durationSec);
+    const buffer = new ArrayBuffer(44 + numSamples * 2);
+    const view = new DataView(buffer);
+
+    const writeString = (offset: number, str: string) => {
+      for (let i = 0; i < str.length; i++) {
+        view.setUint8(offset + i, str.charCodeAt(i));
+      }
+    };
+
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + numSamples * 2, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, numSamples * 2, true);
+
+    const baseHz = (isKannada ? 175 : 155) * Math.max(0.6, Math.min(1.7, pitch));
+    const syllableRate = 4.5 * Math.max(0.6, rate);
+    for (let i = 0; i < numSamples; i++) {
+      const t = i / sampleRate;
+      const envelope = Math.abs(Math.sin(Math.PI * syllableRate * t)) * Math.min(1, t * 8) * Math.min(1, (durationSec - t) * 8);
+      const f0 = baseHz + Math.sin(t * 3.1) * 18;
+      const sample =
+        (Math.sin(2 * Math.PI * f0 * t) * 0.55 +
+          Math.sin(2 * Math.PI * (f0 * 2.02) * t) * 0.25 +
+          Math.sin(2 * Math.PI * (f0 * 3.1) * t) * 0.12) *
+        envelope *
+        0.55;
+      view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, sample)) * 0x7fff, true);
+    }
+
+    return new Blob([buffer], { type: 'audio/wav' });
+  }
+
+  // Create a live mixed Web Audio stream (Score + Cinematic Impact + Voice Harmonics) for ExportStudio video muxing
+  createExportAudioMix(durationSec: number = 3.5): {
+    stream: MediaStream | null;
+    stop: () => void;
+  } {
     try {
       const ctx = this.getContext();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(240 * pitch, ctx.currentTime);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 1.3);
-      setTimeout(() => {
-        if (onEnd) onEnd();
-      }, 1300);
-    } catch (_) {
-      if (onEnd) onEnd();
+      if (typeof ctx.createMediaStreamDestination !== 'function') {
+        return { stream: null, stop: () => {} };
+      }
+
+      const dest = ctx.createMediaStreamDestination();
+      const masterBus = ctx.createGain();
+      masterBus.gain.setValueAtTime(0.65, ctx.currentTime);
+      masterBus.connect(dest);
+      masterBus.connect(ctx.destination);
+
+      const now = ctx.currentTime;
+      const stopAt = now + durationSec;
+
+      // 1. Sub-impact opening hit
+      const sub = ctx.createOscillator();
+      const subGain = ctx.createGain();
+      sub.type = 'sine';
+      sub.frequency.setValueAtTime(110, now);
+      sub.frequency.exponentialRampToValueAtTime(34, now + 1.1);
+      subGain.gain.setValueAtTime(0.55, now);
+      subGain.gain.exponentialRampToValueAtTime(0.001, now + 1.4);
+      sub.connect(subGain);
+      subGain.connect(masterBus);
+      sub.start(now);
+      sub.stop(Math.min(stopAt, now + 1.45));
+
+      // 2. Warm orchestral D-minor chord bed
+      const notes = [146.83, 174.61, 220.0, 293.66];
+      const padOscs: OscillatorNode[] = [];
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = idx % 2 === 0 ? 'triangle' : 'sine';
+        osc.frequency.setValueAtTime(freq, now);
+        g.gain.setValueAtTime(0.001, now);
+        g.gain.linearRampToValueAtTime(0.14, now + 0.35);
+        g.gain.linearRampToValueAtTime(0.001, stopAt);
+        osc.connect(g);
+        g.connect(masterBus);
+        osc.start(now);
+        osc.stop(stopAt);
+        padOscs.push(osc);
+      });
+
+      const stop = () => {
+        try {
+          sub.stop();
+        } catch (_) {}
+        padOscs.forEach((o) => {
+          try {
+            o.stop();
+          } catch (_) {}
+        });
+      };
+
+      return { stream: dest.stream, stop };
+    } catch (e) {
+      console.warn('Export audio mix fallback:', e);
+      return { stream: null, stop: () => {} };
     }
   }
 }

@@ -16,9 +16,14 @@ import { soundFx } from '../../utils/audioSynth';
 interface SettingsStudioProps {
   activeFilm: FilmProject;
   onUpdateFilm: (updates: Partial<FilmProject>) => void;
+  onClearAllData?: () => Promise<void> | void;
 }
 
-export const SettingsStudio: React.FC<SettingsStudioProps> = ({ activeFilm, onUpdateFilm }) => {
+export const SettingsStudio: React.FC<SettingsStudioProps> = ({
+  activeFilm,
+  onUpdateFilm,
+  onClearAllData,
+}) => {
   const [fps, setFps] = useState<24 | 30 | 60>(activeFilm.fps);
   const [aspectRatio, setAspectRatio] = useState(activeFilm.aspectRatio);
   const [resolution, setResolution] = useState(activeFilm.resolution);
@@ -26,6 +31,31 @@ export const SettingsStudio: React.FC<SettingsStudioProps> = ({ activeFilm, onUp
   const [sampleRate, setSampleRate] = useState('96,000 Hz');
   const [wpUrl, setWpUrl] = useState('https://myfilmstudio.com');
   const [saved, setSaved] = useState(false);
+  const [cacheCleared, setCacheCleared] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetSuccessMsg, setResetSuccessMsg] = useState('');
+
+  const handleConfirmRemoveAll = async () => {
+    soundFx.playWhoosh();
+    setIsResetting(true);
+    try {
+      await fetch('/api/studio/clear-all-data', { method: 'POST' });
+      try {
+        localStorage.clear();
+      } catch {
+        // Ignore storage errors
+      }
+      if (onClearAllData) {
+        await onClearAllData();
+      }
+      setConfirmReset(false);
+      setResetSuccessMsg('All saved projects, OAuth tokens, social jobs, and Blogger drafts have been permanently removed.');
+      setTimeout(() => setResetSuccessMsg(''), 6000);
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   const handleSave = () => {
     soundFx.playScannerBeep();
@@ -165,12 +195,13 @@ export const SettingsStudio: React.FC<SettingsStudioProps> = ({ activeFilm, onUp
             <button
               onClick={() => {
                 soundFx.playWhoosh();
-                alert('Proxy and render cache cleared successfully.');
+                setCacheCleared(true);
+                setTimeout(() => setCacheCleared(false), 3000);
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 rounded text-xs font-medium"
             >
-              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-              <span>Purge Unused Render Cache</span>
+              {cacheCleared ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Trash2 className="w-3.5 h-3.5 text-rose-400" />}
+              <span>{cacheCleared ? 'Proxy & Render Cache Purged' : 'Purge Unused Render Cache'}</span>
             </button>
           </div>
 
@@ -193,6 +224,53 @@ export const SettingsStudio: React.FC<SettingsStudioProps> = ({ activeFilm, onUp
                 Connected to plugin endpoint: <code className="text-amber-400">/wp-json/film-studio/v1/sync</code>
               </p>
             </div>
+          </div>
+
+          {/* Remove All Data Box */}
+          <div className="bg-slate-900 border border-rose-900/50 rounded-xl p-5 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <div className="flex items-center gap-2 text-white font-semibold text-sm">
+                <Trash2 className="w-4 h-4 text-rose-400" />
+                <span>Remove All Studio Data</span>
+              </div>
+              <span className="text-xs font-mono text-rose-400">Reset Workspace</span>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              Permanently deletes all local autosaved projects, connected Social &amp; Blogger accounts, encrypted OAuth tokens, upload jobs, publish history, scheduled posts, and drafts.
+            </p>
+
+            {resetSuccessMsg && (
+              <div className="p-2.5 bg-emerald-950/60 border border-emerald-800 rounded text-xs text-emerald-200">
+                {resetSuccessMsg}
+              </div>
+            )}
+
+            {!confirmReset ? (
+              <button
+                onClick={() => setConfirmReset(true)}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-950/60 hover:bg-rose-900 text-rose-200 border border-rose-700/60 rounded text-xs font-semibold"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Remove All Data</span>
+              </button>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleConfirmRemoveAll}
+                  disabled={isResetting}
+                  className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded text-xs font-bold"
+                >
+                  {isResetting ? 'Removing All Data...' : 'Confirm Remove All Data'}
+                </button>
+                <button
+                  onClick={() => setConfirmReset(false)}
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs font-medium"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

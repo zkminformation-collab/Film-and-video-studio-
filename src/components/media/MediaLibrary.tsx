@@ -32,10 +32,13 @@ import {
   Info,
   Clock,
   HardDrive,
-  Eye
+  Eye,
+  Trash2
 } from 'lucide-react';
-import { FilmProject } from '../../types';
+import { FilmProject, StudioModule } from '../../types';
 import { soundFx } from '../../utils/audioSynth';
+import { useAuth, CloudLibraryAsset } from '../../context/AuthContext';
+import { FreeAssetLibraryWorkspace } from './FreeAssetLibraryWorkspace';
 import { 
   ASSET_CATEGORIES,
   INITIAL_COLLECTIONS,
@@ -49,26 +52,152 @@ import {
 interface MediaLibraryProps {
   activeFilm: FilmProject;
   onSendToEditor?: (asset: UniversalAsset) => void;
+  onNavigate?: (module: StudioModule) => void;
 }
 
-export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendToEditor }) => {
+export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendToEditor, onNavigate }) => {
+  const [libraryView, setLibraryView] = useState<'free_library' | 'studio_vault'>('free_library');
+  const { firebaseUser, cloudAssets, saveLibraryAsset, deleteLibraryAsset } = useAuth();
   const [catalog, setCatalog] = useState<UniversalAsset[]>(COMPLETE_MEDIA_CATALOG);
   const [collections, setCollections] = useState<AssetCollection[]>(INITIAL_COLLECTIONS);
+
+  useEffect(() => {
+    if (!cloudAssets || cloudAssets.length === 0) return;
+    setCatalog((prev) => {
+      const existingIds = new Set(prev.map((a) => a.id));
+      const mappedNew: UniversalAsset[] = cloudAssets
+        .filter((ca) => !existingIds.has(ca.id))
+        .map((ca) => ({
+          id: ca.id,
+          name: ca.name,
+          category:
+            ca.category === 'audio'
+              ? 'music'
+              : ca.category === 'stills'
+              ? 'image'
+              : ca.category === 'sfx'
+              ? 'sfx'
+              : ca.category === 'vfx'
+              ? 'vfx'
+              : 'video',
+          subcategory: 'Cloud Vault Sync',
+          source: 'upload',
+          format: ca.format,
+          size: ca.size,
+          duration: ca.duration,
+          thumbnail: ca.thumbnail || '/assets/images/hero_studio_suite_1794901010340.jpg',
+          mediaUrl: ca.url || '/assets/images/hero_studio_suite_1794901010340.jpg',
+          description: `Synced via ${ca.provider}`,
+          tags: ['Cloud Synced', ca.category, ca.provider],
+          license: {
+            type: 'Studio Master Proprietary',
+            commercialUse: true,
+            attribution: 'Personal Cloud Vault',
+            certificateId: `FVS-CLOUD-${ca.id.slice(0, 10)}`,
+            verified: true,
+          },
+          specs: { codec: ca.format, fps: 24, aspect: '16:9' },
+          isFavorite: false,
+          addedAt: new Date().toISOString().split('T')[0],
+          usageCount: 1,
+        }));
+      return mappedNew.length > 0 ? [...mappedNew, ...prev] : prev;
+    });
+  }, [cloudAssets]);
+
+  // Load persisted server-uploaded assets from Unified Cartoon Production Library
+  useEffect(() => {
+    fetch('/api/library/assets')
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data?.success || !Array.isArray(data.assets) || data.assets.length === 0) return;
+        setCatalog((prev) => {
+          const existingIds = new Set(prev.map((a) => a.id));
+          const mapped: UniversalAsset[] = data.assets
+            .filter((item: any) => !existingIds.has(item.id))
+            .map((item: any) => ({
+              id: item.id,
+              name: item.name,
+              category: item.category as AssetCategory,
+              subcategory: item.subcategory || 'Uploaded Studio Asset',
+              source: item.source === 'ai_generated' ? 'ai_generated' : 'upload',
+              format: item.format || 'FILE',
+              size: item.size || '1.0 MB',
+              thumbnail: item.thumbnail || '/assets/images/cartoon_adventure_thumb_1794924309261.jpg',
+              mediaUrl: item.url,
+              description: item.description || 'Persisted in Unified Cartoon Production Library.',
+              tags: Array.isArray(item.tags) ? item.tags : ['Uploaded'],
+              projectId: item.projectId || undefined,
+              projectName: item.projectName || undefined,
+              timelineTrack: item.timelineTrack || undefined,
+              license: {
+                type: 'Studio Master Proprietary',
+                commercialUse: true,
+                attribution: 'ZKMAP STUDIO Unified Library',
+                certificateId: `ZK-LIB-${String(item.id).slice(0, 10)}`,
+                verified: true,
+              },
+              specs: { codec: item.format, fps: 24, aspect: '16:9' },
+              isFavorite: false,
+              addedAt: item.addedAt || new Date().toISOString().split('T')[0],
+              usageCount: 1,
+            }));
+          return mapped.length > 0 ? [...mapped, ...prev] : prev;
+        });
+      })
+      .catch(() => {});
+  }, []);
   const [selectedCategory, setSelectedCategory] = useState<AssetCategory | 'all'>('all');
   const [selectedSource, setSelectedSource] = useState<AssetSource | 'all'>('all');
   const [selectedCollection, setSelectedCollection] = useState<string | 'all'>('all');
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('all');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   
   // Active Selected Asset
-  const [selectedAsset, setSelectedAsset] = useState<UniversalAsset>(COMPLETE_MEDIA_CATALOG[0]);
+  const [selectedAsset, setSelectedAsset] = useState<UniversalAsset | null>(COMPLETE_MEDIA_CATALOG[0] || null);
   const [isPlayingAudio, setIsPlayingAudio] = useState<boolean>(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   
   // Modals & Panels
   const [showAiModal, setShowAiModal] = useState<boolean>(false);
   const [showLicenseModal, setShowLicenseModal] = useState<boolean>(false);
   const [showNewCollectionModal, setShowNewCollectionModal] = useState<boolean>(false);
+  const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
+  const [showTechStackModal, setShowTechStackModal] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Unified Production Library Tech Stack & Catalog Specs from /api/library/catalog
+  const [techStack, setTechStack] = useState<Array<{ name: string; purpose: string }>>([]);
+  const [catalogSpecs, setCatalogSpecs] = useState<
+    Array<{ id: string; name: string; summary: string; assetTypes: string[] }>
+  >([]);
+
+  // Category-Aware Upload Modal State
+  const [uploadCategory, setUploadCategory] = useState<AssetCategory>('character');
+  const [uploadTags, setUploadTags] = useState<string>('Cartoon, Studio');
+  const [uploadDescription, setUploadDescription] = useState<string>('');
+  const [isUploading, setIsUploading] = useState<boolean>(false);
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    fetch('/api/library/catalog')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.success) {
+          if (Array.isArray(data.techStack)) setTechStack(data.techStack);
+          if (Array.isArray(data.categories)) setCatalogSpecs(data.categories);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+        audioPlayerRef.current = null;
+      }
+    };
+  }, []);
 
   // AI Generator Form State
   const [aiPrompt, setAiPrompt] = useState('Epic cinematic establishing drone shot of ancient alien obelisk at golden hour');
@@ -124,18 +253,32 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
     return () => cancelAnimationFrame(animFrameRef.current);
   }, [isPlayingAudio]);
 
+  // Distinct project IDs present in catalog for quick filtering
+  const availableProjects = Array.from(
+    new Map(
+      catalog
+        .filter((a) => a.projectId)
+        .map((a) => [a.projectId as string, a.projectName || (a.projectId as string)])
+    ).entries()
+  );
+
   // Filter Catalog
   const filteredAssets = catalog.filter((asset) => {
     const matchCategory = selectedCategory === 'all' || asset.category === selectedCategory;
     const matchSource = selectedSource === 'all' || asset.source === selectedSource;
     const matchCollection = selectedCollection === 'all' || asset.collection === selectedCollection;
+    const matchProject = selectedProjectId === 'all' || asset.projectId === selectedProjectId;
     const matchFav = !showFavoritesOnly || asset.isFavorite;
+    const q = searchQuery.toLowerCase();
     const matchSearch =
-      asset.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()));
+      !q ||
+      asset.name.toLowerCase().includes(q) ||
+      asset.description.toLowerCase().includes(q) ||
+      (asset.projectId || '').toLowerCase().includes(q) ||
+      (asset.projectName || '').toLowerCase().includes(q) ||
+      asset.tags.some((t) => t.toLowerCase().includes(q));
 
-    return matchCategory && matchSource && matchCollection && matchFav && matchSearch;
+    return matchCategory && matchSource && matchCollection && matchProject && matchFav && matchSearch;
   });
 
   const notify = (msg: string) => {
@@ -149,17 +292,70 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
     setCatalog((prev) =>
       prev.map((a) => (a.id === assetId ? { ...a, isFavorite: !a.isFavorite } : a))
     );
-    if (selectedAsset.id === assetId) {
-      setSelectedAsset((prev) => ({ ...prev, isFavorite: !prev.isFavorite }));
+    if (selectedAsset?.id === assetId) {
+      setSelectedAsset((prev) => (prev ? { ...prev, isFavorite: !prev.isFavorite } : null));
     }
     fetch(`/api/assets/${assetId}/favorite`, { method: 'POST' }).catch(() => {});
+  };
+
+  const handleDeleteAsset = (assetId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    soundFx.playWhoosh();
+    const removed = catalog.find((a) => a.id === assetId);
+    setCatalog((prev) => {
+      const next = prev.filter((a) => a.id !== assetId);
+      if (selectedAsset?.id === assetId) {
+        setSelectedAsset(next[0] || null);
+      }
+      return next;
+    });
+    setConfirmDeleteId(null);
+    fetch(`/api/assets/${encodeURIComponent(assetId)}`, { method: 'DELETE' }).catch(() => {});
+    fetch(`/api/library/assets/${encodeURIComponent(assetId)}`, { method: 'DELETE' }).catch(() => {});
+    if (firebaseUser) {
+      deleteLibraryAsset(assetId).catch(() => {});
+    }
+    if (removed) {
+      notify(`Deleted "${removed.name}" from studio media library.`);
+    }
   };
 
   const handleAudition = (asset: UniversalAsset) => {
     soundFx.unlock();
     if (isPlayingAudio) {
       soundFx.stopScorePlayback();
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+        audioPlayerRef.current.currentTime = 0;
+        audioPlayerRef.current = null;
+      }
       setIsPlayingAudio(false);
+      return;
+    }
+
+    // Play real uploaded audio files directly when available
+    const isRealAudioUrl =
+      asset.mediaUrl &&
+      (asset.mediaUrl.startsWith('/api/library-uploads/') ||
+        /\.(mp3|wav|ogg|m4a)(\?|$)/i.test(asset.mediaUrl)) &&
+      ['music', 'sfx', 'voice'].includes(asset.category);
+
+    if (isRealAudioUrl) {
+      const player = new Audio(asset.mediaUrl);
+      audioPlayerRef.current = player;
+      setIsPlayingAudio(true);
+      player.onended = () => {
+        setIsPlayingAudio(false);
+        audioPlayerRef.current = null;
+      };
+      player.onerror = () => {
+        setIsPlayingAudio(false);
+        audioPlayerRef.current = null;
+      };
+      player.play().catch(() => {
+        setIsPlayingAudio(false);
+        audioPlayerRef.current = null;
+      });
       return;
     }
 
@@ -180,24 +376,44 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
     }, 2500);
   };
 
+  const resolveTimelineTrackLabel = (asset: UniversalAsset): string => {
+    if (asset.timelineTrack) return asset.timelineTrack;
+    switch (asset.category) {
+      case 'character':
+        return 'Character / Image';
+      case 'image':
+      case 'background':
+      case 'prop':
+        return 'Image';
+      case 'video':
+      case 'animation':
+        return 'Video';
+      case 'voice':
+        return 'Voice';
+      case 'music':
+        return 'Music';
+      case 'sfx':
+        return 'SFX';
+      case 'vfx':
+        return 'VFX';
+      case 'subtitle':
+      case 'template':
+      case 'transition':
+      case 'camera':
+      case 'color':
+        return 'Overlay';
+      default:
+        return 'Video';
+    }
+  };
+
   const handleSendToTimeline = (asset: UniversalAsset) => {
     soundFx.playCinematicImpact();
+    const trackName = resolveTimelineTrackLabel(asset);
     if (onSendToEditor) {
-      onSendToEditor(asset);
+      onSendToEditor({ ...asset, timelineTrack: trackName });
     }
-    let trackName = 'Track V1 (Master Video)';
-    if (asset.category === 'image' || asset.category === 'animation' || asset.category === 'vfx') {
-      trackName = 'Track V2 (Overlay / B-Roll)';
-    } else if (asset.category === 'music') {
-      trackName = 'Track A1 (Film Score)';
-    } else if (asset.category === 'sfx') {
-      trackName = 'Track A2 (Foley & SFX)';
-    } else if (asset.category === 'voice') {
-      trackName = 'Track A1 (Dialogue / VO)';
-    } else if (asset.category === 'template') {
-      trackName = 'Track Titles & Graphics';
-    }
-    notify(`Inserted "${asset.name}" into Video Editor ${trackName}!`);
+    notify(`Inserted "${asset.name}" into Editing Timeline (${trackName} track)!`);
   };
 
   const handleDownloadAsset = (asset: UniversalAsset) => {
@@ -221,8 +437,51 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       notify(`Downloaded .CUBE 3D LUT for "${asset.name}"`);
+    } else if (asset.category === 'subtitle') {
+      const srtContent = `1\n00:00:00,000 --> 00:00:05,000\n${asset.description || asset.name}\n`;
+      const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${asset.name.replace(/[^a-zA-Z0-9]/g, '_')}.srt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      notify(`Downloaded .SRT subtitle file for "${asset.name}"`);
+    } else if (asset.mediaUrl && !asset.mediaUrl.includes('#')) {
+      const a = document.createElement('a');
+      a.href = asset.mediaUrl;
+      a.download = asset.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      notify(`Downloaded "${asset.name}"`);
     } else {
-      notify(`Initiated background high-speed master download for "${asset.name}"`);
+      const manifest = JSON.stringify(
+        {
+          id: asset.id,
+          name: asset.name,
+          category: asset.category,
+          projectId: asset.projectId || null,
+          timelineTrack: resolveTimelineTrackLabel(asset),
+          format: asset.format,
+          description: asset.description,
+          tags: asset.tags,
+        },
+        null,
+        2
+      );
+      const blob = new Blob([manifest], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${asset.name.replace(/[^a-zA-Z0-9]/g, '_')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      notify(`Downloaded production asset package for "${asset.name}"`);
     }
   };
 
@@ -246,47 +505,135 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    explicitCategory?: AssetCategory
+  ) => {
     const files = e.target.files;
-    if (files && files.length > 0) {
-      const file = files[0];
-      soundFx.playShutterSound();
-      const isImg = file.type.startsWith('image');
-      const isAud = file.type.startsWith('audio');
-      const isVid = file.type.startsWith('video');
+    if (!files || files.length === 0) return;
 
-      const cat: AssetCategory = isVid ? 'video' : isAud ? 'music' : isImg ? 'image' : 'project';
+    setIsUploading(true);
+    soundFx.playShutterSound();
+    let uploadedCount = 0;
 
-      const newAsset: UniversalAsset = {
-        id: `usr-${Date.now()}`,
-        name: file.name,
-        category: cat,
-        subcategory: 'User Uploads',
-        source: 'upload',
-        format: file.type || 'Custom File',
-        size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
-        resolution: isVid || isImg ? '3840x2160 (4K)' : undefined,
-        duration: isVid || isAud ? '00:04:12' : undefined,
-        thumbnail: isImg ? URL.createObjectURL(file) : '/assets/images/cinema_soundstage_set_1794406569758.jpg',
-        mediaUrl: URL.createObjectURL(file),
-        description: 'User uploaded media asset registered into studio catalog.',
-        tags: ['Custom Upload', 'User Asset', cat],
-        license: {
-          type: 'Studio Master Proprietary',
-          commercialUse: true,
-          attribution: 'User Personal Archive',
-          certificateId: `FVS-USR-${Date.now()}`,
-          verified: true
-        },
-        specs: { codec: file.type || 'Custom', fps: 24, aspect: '16:9' },
-        isFavorite: false,
-        addedAt: new Date().toISOString().split('T')[0],
-        usageCount: 1
-      };
+    try {
+      const customTags = uploadTags
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
 
-      setCatalog((prev) => [newAsset, ...prev]);
-      setSelectedAsset(newAsset);
-      notify(`Uploaded "${file.name}" to Project Asset Library!`);
+      for (const file of Array.from(files)) {
+        const isImg = file.type.startsWith('image');
+        const isAud = file.type.startsWith('audio');
+        const isVid = file.type.startsWith('video');
+
+        const chosenCat: AssetCategory =
+          explicitCategory ||
+          (selectedCategory !== 'all'
+            ? selectedCategory
+            : isVid
+            ? 'video'
+            : isAud
+            ? 'sfx'
+            : isImg
+            ? 'image'
+            : 'project');
+
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+          reader.readAsDataURL(file);
+        });
+
+        const res = await fetch('/api/library/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: file.name,
+            category: chosenCat,
+            subcategory: 'Uploaded Studio Asset',
+            mimeType: file.type,
+            dataUrl,
+            description:
+              uploadDescription.trim() ||
+              `Uploaded into Unified Cartoon Production Library (${chosenCat}).`,
+            tags:
+              customTags.length > 0
+                ? [...customTags, chosenCat]
+                : ['Uploaded', chosenCat, file.type.split('/')[1]?.toUpperCase() || 'FILE'],
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || `Upload failed for ${file.name}.`);
+        }
+
+        const saved = data.asset;
+        const newAsset: UniversalAsset = {
+          id: saved.id,
+          name: saved.name,
+          category: saved.category as AssetCategory,
+          subcategory: saved.subcategory,
+          source: 'upload',
+          format: saved.format,
+          size: saved.size,
+          thumbnail: saved.thumbnail,
+          mediaUrl: saved.url,
+          description: saved.description,
+          tags: saved.tags,
+          license: {
+            type: 'Studio Master Proprietary',
+            commercialUse: true,
+            attribution: 'ZKMAP STUDIO Unified Library',
+            certificateId: `ZK-LIB-${String(saved.id).slice(0, 10)}`,
+            verified: true,
+          },
+          specs: { codec: saved.format, fps: 24, aspect: '16:9' },
+          isFavorite: false,
+          addedAt: saved.addedAt,
+          usageCount: 1,
+        };
+
+        setCatalog((prev) => [newAsset, ...prev]);
+        setSelectedAsset(newAsset);
+        uploadedCount += 1;
+
+        if (firebaseUser) {
+          const fsCat: CloudLibraryAsset['category'] = isVid
+            ? 'footage'
+            : isAud
+            ? 'audio'
+            : isImg
+            ? 'stills'
+            : 'footage';
+          saveLibraryAsset({
+            id: newAsset.id,
+            name: newAsset.name,
+            category: fsCat,
+            format: newAsset.format,
+            duration: newAsset.duration || '00:08',
+            size: newAsset.size,
+            provider: 'Unified Studio Library',
+          }).catch(() => {});
+        }
+      }
+
+      setShowUploadModal(false);
+      setUploadDescription('');
+      notify(
+        uploadedCount === 1
+          ? `Saved 1 asset to Unified Production Library.`
+          : `Saved ${uploadedCount} assets to Unified Production Library.`
+      );
+    } catch (err: any) {
+      notify(
+        err?.message ||
+          'Could not upload file. Supported: JPG, PNG, WebP, MP3, WAV, OGG, MP4, WebM (max 25 MB).'
+      );
+    } finally {
+      setIsUploading(false);
+      e.target.value = '';
     }
   };
 
@@ -338,6 +685,27 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
 
       setCatalog((prev) => [newAiAsset, ...prev]);
       setSelectedAsset(newAiAsset);
+      if (firebaseUser) {
+        const fsCat: CloudLibraryAsset['category'] =
+          aiAssetType === 'music'
+            ? 'audio'
+            : aiAssetType === 'sfx'
+            ? 'sfx'
+            : aiAssetType === 'image'
+            ? 'stills'
+            : 'footage';
+        saveLibraryAsset({
+          id: newAiAsset.id,
+          name: newAiAsset.name,
+          category: fsCat,
+          format: newAiAsset.format,
+          duration: newAiAsset.duration || '00:06',
+          size: newAiAsset.size,
+          url: newAiAsset.mediaUrl,
+          thumbnail: newAiAsset.thumbnail,
+          provider: aiStyle,
+        }).catch(() => {});
+      }
       setShowAiModal(false);
       soundFx.playCinematicImpact();
       notify(`Synthesized new AI ${aiAssetType} asset and registered to catalog!`);
@@ -355,7 +723,7 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
       name: newColName,
       description: newColDesc || 'Curated studio collection',
       assetCount: 1,
-      coverImage: selectedAsset.thumbnail || '/assets/images/cinema_sci_fi_scene_1794406566762.jpg',
+      coverImage: selectedAsset?.thumbnail || '/assets/images/cinema_sci_fi_scene_1794406566762.jpg',
       category: newColCategory
     };
     setCollections((prev) => [...prev, newCol]);
@@ -367,8 +735,52 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
     notify(`Created new collection "${newCol.name}"!`);
   };
 
+  if (libraryView === 'free_library') {
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden bg-[#07090e] text-slate-100">
+        <div className="px-5 py-2 border-b border-slate-800 bg-slate-900 flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setLibraryView('free_library')}
+            className="px-3.5 py-1.5 rounded-lg bg-amber-500 text-black text-xs font-extrabold"
+          >
+            Unified Free Asset Library (Lottie · 3D · VFX · Audio · Video · Tools)
+          </button>
+          <button
+            type="button"
+            onClick={() => setLibraryView('studio_vault')}
+            className="px-3.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 hover:text-white text-xs font-semibold"
+          >
+            Studio Media Vault & Uploads
+          </button>
+        </div>
+        <FreeAssetLibraryWorkspace
+          activeFilm={activeFilm}
+          onSendToEditor={onSendToEditor}
+          onNavigate={onNavigate}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[#07090e] text-slate-100 select-none">
+      <div className="px-5 py-2 border-b border-slate-800 bg-slate-900 flex flex-wrap items-center gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={() => setLibraryView('free_library')}
+          className="px-3.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 hover:text-white text-xs font-semibold"
+        >
+          Unified Free Asset Library (Lottie · 3D · VFX · Audio · Video · Tools)
+        </button>
+        <button
+          type="button"
+          onClick={() => setLibraryView('studio_vault')}
+          className="px-3.5 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-extrabold"
+        >
+          Studio Media Vault & Uploads
+        </button>
+      </div>
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed top-16 right-6 z-50 p-3 bg-purple-950/90 border border-purple-500/50 text-white rounded-xl text-xs font-mono flex items-center gap-2 shadow-2xl shadow-purple-900/50 animate-in fade-in slide-in-from-top-2">
@@ -380,18 +792,33 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
       {/* Top Banner: Master Search, 4 Sources, AI Generator & Personal Upload Buttons */}
       <div className="border-b border-purple-500/20 bg-[#090b11] px-5 py-3 space-y-3 shrink-0">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          {/* Search Box */}
-          <div className="flex items-center gap-2 flex-1 max-w-md">
-            <div className="relative w-full">
+          {/* Search Box & Project ID Filter */}
+          <div className="flex items-center gap-2 flex-1 max-w-xl">
+            <div className="relative flex-1">
               <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search all 14 libraries (e.g. 4K, braam, rain, monolith, LUT)..."
+                placeholder={`Search all ${ASSET_CATEGORIES.length} libraries, tags, or project ID...`}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 outline-none focus:border-purple-500 transition-colors"
               />
             </div>
+            {availableProjects.length > 0 && (
+              <select
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+                className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-cyan-300 outline-none focus:border-cyan-500 max-w-[170px]"
+                title="Filter library assets by Project ID"
+              >
+                <option value="all">All Projects</option>
+                {availableProjects.map(([pid, pname]) => (
+                  <option key={pid} value={pid}>
+                    {pid} · {pname}
+                  </option>
+                ))}
+              </select>
+            )}
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
@@ -428,8 +855,8 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
             ))}
           </div>
 
-          {/* Action Bar: Favorites, Collections, AI Gen & Upload */}
-          <div className="flex items-center gap-2 shrink-0">
+          {/* Action Bar: Favorites, Stack, AI Gen & Upload */}
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
             <button
               onClick={() => {
                 soundFx.playScannerBeep();
@@ -449,6 +876,18 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
             <button
               onClick={() => {
                 soundFx.playScannerBeep();
+                setShowTechStackModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-500/40 rounded-xl text-xs font-bold transition-all active:scale-95"
+              title="Inspect 15 Cartoon Production Categories & 10 Programming Libraries"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Production Stack</span>
+            </button>
+
+            <button
+              onClick={() => {
+                soundFx.playScannerBeep();
                 setShowAiModal(true);
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 hover:from-purple-500 hover:to-cyan-400 text-white font-bold rounded-xl text-xs shadow-md shadow-purple-600/30 transition-all active:scale-95"
@@ -457,15 +896,21 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
               <span>AI Asset Creator</span>
             </button>
 
-            <label className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-purple-300 border border-purple-500/40 rounded-xl text-xs font-bold cursor-pointer transition-all active:scale-95">
+            <button
+              onClick={() => {
+                soundFx.playScannerBeep();
+                if (selectedCategory !== 'all') setUploadCategory(selectedCategory);
+                setShowUploadModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-purple-300 border border-purple-500/40 rounded-xl text-xs font-bold cursor-pointer transition-all active:scale-95"
+            >
               <Upload className="w-3.5 h-3.5" />
-              <span>Upload Personal</span>
-              <input type="file" onChange={handleFileUpload} className="hidden" />
-            </label>
+              <span>Upload Asset</span>
+            </button>
           </div>
         </div>
 
-        {/* 14 Categories Horizontal Strip */}
+        {/* All Cartoon & Film Categories Horizontal Strip */}
         <div className="flex items-center gap-1 overflow-x-auto pb-1 text-xs scrollbar-thin">
           <button
             onClick={() => {
@@ -478,7 +923,7 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
                 : 'bg-slate-950/80 text-slate-400 hover:text-white hover:bg-slate-900'
             }`}
           >
-            All 14 Libraries ({catalog.length})
+            All {ASSET_CATEGORIES.length} Libraries ({catalog.length})
           </button>
 
           {ASSET_CATEGORIES.map((cat) => {
@@ -624,8 +1069,9 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
                 {filteredAssets.map((asset) => {
-                  const isSelected = selectedAsset.id === asset.id;
+                  const isSelected = selectedAsset?.id === asset.id;
                   const isAudio = asset.category === 'music' || asset.category === 'sfx' || asset.category === 'voice';
+                  const isConfirmingCardDelete = confirmDeleteId === `card-${asset.id}`;
 
                   return (
                     <div
@@ -656,15 +1102,56 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
                           <span>{asset.category}</span>
                         </div>
 
-                        {/* Favorite Heart Button */}
-                        <button
-                          type="button"
-                          onClick={(e) => toggleFavorite(asset.id, e)}
-                          className="absolute top-2 right-2 p-1.5 bg-black/70 hover:bg-black/90 rounded-lg transition-transform active:scale-90"
-                          title="Favorite Asset"
-                        >
-                          <Star className={`w-3.5 h-3.5 ${asset.isFavorite ? 'fill-amber-400 text-amber-400' : 'text-slate-400'}`} />
-                        </button>
+                        {/* Top-Right Actions: Delete & Favorite */}
+                        <div className="absolute top-2 right-2 flex items-center gap-1 z-10">
+                          {isConfirmingCardDelete ? (
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex items-center gap-1 bg-rose-950/95 border border-rose-500/60 rounded-lg px-1.5 py-1 shadow-lg"
+                            >
+                              <button
+                                type="button"
+                                onClick={(e) => handleDeleteAsset(asset.id, e)}
+                                className="px-1.5 py-0.5 bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-bold rounded"
+                              >
+                                Delete
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setConfirmDeleteId(null);
+                                }}
+                                className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] rounded"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setConfirmDeleteId(`card-${asset.id}`);
+                                }}
+                                className="p-1.5 bg-black/70 hover:bg-rose-600/90 text-rose-300 hover:text-white rounded-lg transition-colors"
+                                title={`Delete ${asset.name}`}
+                                aria-label={`Delete ${asset.name}`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => toggleFavorite(asset.id, e)}
+                                className="p-1.5 bg-black/70 hover:bg-black/90 rounded-lg transition-transform active:scale-90"
+                                title="Favorite Asset"
+                              >
+                                <Star className={`w-3.5 h-3.5 ${asset.isFavorite ? 'fill-amber-400 text-amber-400' : 'text-slate-400'}`} />
+                              </button>
+                            </>
+                          )}
+                        </div>
 
                         {/* Duration or Format Badge */}
                         {asset.duration && (
@@ -704,9 +1191,12 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
                           </p>
                         </div>
 
-                        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px] text-slate-500 font-mono">
-                          <span>{asset.resolution || asset.format}</span>
-                          <span className="text-slate-400">{asset.size}</span>
+                        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2 text-[10px] text-slate-500 font-mono">
+                          <span className="truncate">
+                            {asset.projectId ? `${asset.projectId} · ` : ''}
+                            {resolveTimelineTrackLabel(asset)}
+                          </span>
+                          <span className="text-slate-400 shrink-0">{asset.size}</span>
                         </div>
                       </div>
                     </div>
@@ -719,148 +1209,196 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
 
         {/* Right Asset Studio Inspector & Direct Editor Insertion Panel */}
         <div className="w-full lg:w-96 bg-[#090b11] border-l border-purple-500/20 p-5 overflow-y-auto space-y-5 shrink-0">
-          <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
-            <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono-cinema">
-                Asset Inspector
-              </h3>
-              <p className="text-[10px] text-purple-400 font-mono mt-0.5">
-                Technical Metadata & Direct Timeline Routing
-              </p>
+          {!selectedAsset ? (
+            <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-3 text-slate-400 text-xs">
+              <FolderOpen className="w-8 h-8 text-slate-600" />
+              <p>No media asset selected. Upload personal media or generate an AI asset above.</p>
             </div>
-            <button
-              onClick={() => toggleFavorite(selectedAsset.id)}
-              className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-amber-400"
-              title="Toggle Favorite"
-            >
-              <Star className={`w-4 h-4 ${selectedAsset.isFavorite ? 'fill-amber-400 text-amber-400' : ''}`} />
-            </button>
-          </div>
-
-          {/* Main Monitor Box / Preview Area */}
-          <div className="space-y-4 text-xs">
-            <div className="aspect-video bg-black rounded-xl overflow-hidden border border-purple-500/30 relative shadow-2xl flex items-center justify-center">
-              <img
-                src={selectedAsset.thumbnail}
-                alt={selectedAsset.name}
-                referrerPolicy="no-referrer"
-                className={`w-full h-full object-cover ${selectedAsset.specs.lutFilter || ''}`}
-              />
-
-              <div className="absolute top-2 left-2 bg-black/85 text-[10px] font-mono text-cyan-300 px-2 py-0.5 rounded border border-cyan-500/30 uppercase">
-                {selectedAsset.category} · {selectedAsset.specs.aspect || '16:9'}
-              </div>
-
-              {selectedAsset.duration && (
-                <div className="absolute bottom-2 right-2 bg-black/85 text-[10px] font-mono text-purple-300 px-2 py-0.5 rounded border border-purple-500/30">
-                  {selectedAsset.duration}
-                </div>
-              )}
-            </div>
-
-            {/* Audio Waveform Oscillogram if audio-related */}
-            {(selectedAsset.category === 'music' || selectedAsset.category === 'sfx' || selectedAsset.category === 'voice') && (
-              <div className="h-28 bg-black rounded-xl overflow-hidden border border-cyan-500/30 p-2.5 flex flex-col justify-between relative shadow-xl">
-                <div className="flex items-center justify-between text-[10px] font-mono text-cyan-400">
-                  <span className="flex items-center gap-1">
-                    <Activity className="w-3 h-3 animate-pulse" />
-                    AUDIO SPECTRUM OSCILLOGRAM
-                  </span>
-                  <span>{selectedAsset.specs.sampleRate || '96 kHz'}</span>
-                </div>
-                <canvas ref={canvasRef} width={340} height={60} className="w-full h-14 rounded" />
-                <div className="flex items-center justify-between text-[9px] font-mono text-slate-500">
-                  <span>{selectedAsset.specs.bitDepth || '24-bit'} / {selectedAsset.specs.channels || 'Stereo'}</span>
-                  <span className={isPlayingAudio ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
-                    {isPlayingAudio ? '● PLAYING AUDIO OUTPUT' : 'STANDBY'}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* Title & Description */}
-            <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
-              <span className="text-[10px] text-slate-500 uppercase font-mono block">Asset Name</span>
-              <h4 className="text-xs font-bold text-white break-all">{selectedAsset.name}</h4>
-              <p className="text-[11px] text-slate-400 pt-1 leading-relaxed">
-                {selectedAsset.description}
-              </p>
-            </div>
-
-            {/* Licensing & Rights Certificate Box */}
-            <div className="p-3 bg-gradient-to-r from-purple-950/40 to-slate-950 border border-purple-500/30 rounded-xl space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px] font-bold">
-                  <ShieldCheck className="w-4 h-4" />
-                  <span>{selectedAsset.license.type}</span>
+          ) : (
+            <>
+              <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono-cinema">
+                    Asset Inspector
+                  </h3>
+                  <p className="text-[10px] text-purple-400 font-mono mt-0.5">
+                    Technical Metadata & Direct Timeline Routing
+                  </p>
                 </div>
                 <button
-                  onClick={() => handleVerifyLicense(selectedAsset)}
-                  className="text-[10px] font-mono text-cyan-300 hover:underline"
+                  onClick={() => toggleFavorite(selectedAsset.id)}
+                  className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-amber-400"
+                  title="Toggle Favorite"
                 >
-                  Verify Rights →
+                  <Star className={`w-4 h-4 ${selectedAsset.isFavorite ? 'fill-amber-400 text-amber-400' : ''}`} />
                 </button>
               </div>
-              <div className="text-[10px] font-mono text-slate-400 flex items-center justify-between">
-                <span>Commercial Use: {selectedAsset.license.commercialUse ? 'Permitted ✓' : 'Non-Commercial'}</span>
-                <span>Cert: {selectedAsset.license.certificateId.slice(0, 14)}</span>
-              </div>
-            </div>
 
-            {/* Technical Metadata Specs Grid */}
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-[9px] text-slate-500 uppercase font-mono block">Format / Codec</span>
-                <span className="text-purple-300 font-mono font-bold">{selectedAsset.format}</span>
-              </div>
-              <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-[9px] text-slate-500 uppercase font-mono block">Resolution / Spec</span>
-                <span className="text-amber-400 font-mono font-bold truncate block">{selectedAsset.resolution || selectedAsset.specs.polyCount || 'High Fidelity'}</span>
-              </div>
-              <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-[9px] text-slate-500 uppercase font-mono block">File Size</span>
-                <span className="text-slate-200 font-mono font-bold">{selectedAsset.size}</span>
-              </div>
-              <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
-                <span className="text-[9px] text-slate-500 uppercase font-mono block">Added / Usage</span>
-                <span className="text-cyan-400 font-mono font-bold">{selectedAsset.usageCount} times used</span>
-              </div>
-            </div>
+              {/* Main Monitor Box / Preview Area */}
+              <div className="space-y-4 text-xs">
+                <div className="aspect-video bg-black rounded-xl overflow-hidden border border-purple-500/30 relative shadow-2xl flex items-center justify-center">
+                  <img
+                    src={selectedAsset.thumbnail}
+                    alt={selectedAsset.name}
+                    referrerPolicy="no-referrer"
+                    className={`w-full h-full object-cover ${selectedAsset.specs.lutFilter || ''}`}
+                  />
 
-            {/* Core Action Buttons: Timeline Insert, Audition, Download */}
-            <div className="space-y-2 pt-2">
-              <button
-                type="button"
-                onClick={() => handleSendToTimeline(selectedAsset)}
-                className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-xl shadow-purple-600/30 transition-all active:scale-95"
-              >
-                <Film className="w-4 h-4" />
-                <span>Add Directly to Video Editor Timeline</span>
-              </button>
+                  <div className="absolute top-2 left-2 bg-black/85 text-[10px] font-mono text-cyan-300 px-2 py-0.5 rounded border border-cyan-500/30 uppercase">
+                    {selectedAsset.category} · {resolveTimelineTrackLabel(selectedAsset)}
+                  </div>
 
-              <div className="grid grid-cols-2 gap-2">
+                  {selectedAsset.projectId && (
+                    <div className="absolute top-2 right-2 bg-black/85 text-[10px] font-mono text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30">
+                      {selectedAsset.projectId}
+                    </div>
+                  )}
+
+                  {selectedAsset.duration && (
+                    <div className="absolute bottom-2 right-2 bg-black/85 text-[10px] font-mono text-purple-300 px-2 py-0.5 rounded border border-purple-500/30">
+                      {selectedAsset.duration}
+                    </div>
+                  )}
+                </div>
+
+                {/* Audio Waveform Oscillogram if audio-related */}
                 {(selectedAsset.category === 'music' || selectedAsset.category === 'sfx' || selectedAsset.category === 'voice') && (
-                  <button
-                    type="button"
-                    onClick={() => handleAudition(selectedAsset)}
-                    className="py-2.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-500/40 rounded-xl text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition-colors"
-                  >
-                    {isPlayingAudio ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-                    <span>{isPlayingAudio ? 'Stop Sound' : 'Audition Audio'}</span>
-                  </button>
+                  <div className="h-28 bg-black rounded-xl overflow-hidden border border-cyan-500/30 p-2.5 flex flex-col justify-between relative shadow-xl">
+                    <div className="flex items-center justify-between text-[10px] font-mono text-cyan-400">
+                      <span className="flex items-center gap-1">
+                        <Activity className="w-3 h-3 animate-pulse" />
+                        AUDIO SPECTRUM OSCILLOGRAM
+                      </span>
+                      <span>{selectedAsset.specs.sampleRate || '96 kHz'}</span>
+                    </div>
+                    <canvas ref={canvasRef} width={340} height={60} className="w-full h-14 rounded" />
+                    <div className="flex items-center justify-between text-[9px] font-mono text-slate-500">
+                      <span>{selectedAsset.specs.bitDepth || '24-bit'} / {selectedAsset.specs.channels || 'Stereo'}</span>
+                      <span className={isPlayingAudio ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
+                        {isPlayingAudio ? '● PLAYING AUDIO OUTPUT' : 'STANDBY'}
+                      </span>
+                    </div>
+                  </div>
                 )}
 
-                <button
-                  type="button"
-                  onClick={() => handleDownloadAsset(selectedAsset)}
-                  className="py-2.5 bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition-colors"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Download File</span>
-                </button>
+                {/* Title & Description */}
+                <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
+                  <span className="text-[10px] text-slate-500 uppercase font-mono block">Asset Name</span>
+                  <h4 className="text-xs font-bold text-white break-all">{selectedAsset.name}</h4>
+                  <p className="text-[11px] text-slate-400 pt-1 leading-relaxed">
+                    {selectedAsset.description}
+                  </p>
+                </div>
+
+                {/* Licensing & Rights Certificate Box */}
+                <div className="p-3 bg-gradient-to-r from-purple-950/40 to-slate-950 border border-purple-500/30 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px] font-bold">
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>{selectedAsset.license.type}</span>
+                    </div>
+                    <button
+                      onClick={() => handleVerifyLicense(selectedAsset)}
+                      className="text-[10px] font-mono text-cyan-300 hover:underline"
+                    >
+                      Verify Rights →
+                    </button>
+                  </div>
+                  <div className="text-[10px] font-mono text-slate-400 flex items-center justify-between">
+                    <span>Commercial Use: {selectedAsset.license.commercialUse ? 'Permitted ✓' : 'Non-Commercial'}</span>
+                    <span>Cert: {selectedAsset.license.certificateId.slice(0, 14)}</span>
+                  </div>
+                </div>
+
+                {/* Technical Metadata Specs Grid */}
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                    <span className="text-[9px] text-slate-500 uppercase font-mono block">Format / Codec</span>
+                    <span className="text-purple-300 font-mono font-bold">{selectedAsset.format}</span>
+                  </div>
+                  <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                    <span className="text-[9px] text-slate-500 uppercase font-mono block">Resolution / Spec</span>
+                    <span className="text-amber-400 font-mono font-bold truncate block">{selectedAsset.resolution || selectedAsset.specs.polyCount || 'High Fidelity'}</span>
+                  </div>
+                  <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                    <span className="text-[9px] text-slate-500 uppercase font-mono block">File Size</span>
+                    <span className="text-slate-200 font-mono font-bold">{selectedAsset.size}</span>
+                  </div>
+                  <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-lg">
+                    <span className="text-[9px] text-slate-500 uppercase font-mono block">Added / Usage</span>
+                    <span className="text-cyan-400 font-mono font-bold">{selectedAsset.usageCount} times used</span>
+                  </div>
+                </div>
+
+                {/* Core Action Buttons: Timeline Insert, Audition, Download, Delete */}
+                <div className="space-y-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleSendToTimeline(selectedAsset)}
+                    className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-xl shadow-purple-600/30 transition-all active:scale-95"
+                  >
+                    <Film className="w-4 h-4" />
+                    <span>Add Directly to Video Editor Timeline</span>
+                  </button>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    {(selectedAsset.category === 'music' || selectedAsset.category === 'sfx' || selectedAsset.category === 'voice') && (
+                      <button
+                        type="button"
+                        onClick={() => handleAudition(selectedAsset)}
+                        className="py-2.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-500/40 rounded-xl text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition-colors"
+                      >
+                        {isPlayingAudio ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                        <span>{isPlayingAudio ? 'Stop Sound' : 'Audition Audio'}</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadAsset(selectedAsset)}
+                      className="py-2.5 bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download File</span>
+                    </button>
+                  </div>
+
+                  {confirmDeleteId === `insp-${selectedAsset.id}` ? (
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteAsset(selectedAsset.id)}
+                        className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Confirm Delete</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 rounded-xl text-xs font-mono"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteId(`insp-${selectedAsset.id}`)}
+                      className="w-full py-2.5 bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>
+                        {selectedAsset.category === 'video' || selectedAsset.category === 'film' || selectedAsset.category === 'animation'
+                          ? 'Delete Video'
+                          : 'Delete Asset'}
+                      </span>
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -1068,6 +1606,184 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
                 className="flex-1 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 text-white font-bold rounded-xl"
               >
                 Save Collection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: Category-Aware Upload to Unified Production Library */}
+      {showUploadModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-[#090b11] border border-purple-500/40 rounded-2xl p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 text-xs">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-purple-300 font-bold">
+                <Upload className="w-4 h-4" />
+                <span>Upload to Cartoon Production Library</span>
+              </div>
+              <button
+                onClick={() => setShowUploadModal(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-mono text-slate-400 mb-1">
+                  Target Library Category
+                </label>
+                <select
+                  value={uploadCategory}
+                  onChange={(e) => setUploadCategory(e.target.value as AssetCategory)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white outline-none focus:border-purple-500"
+                >
+                  {ASSET_CATEGORIES.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.icon} {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-mono text-slate-400 mb-1">
+                  Tags (comma-separated)
+                </label>
+                <input
+                  type="text"
+                  value={uploadTags}
+                  onChange={(e) => setUploadTags(e.target.value)}
+                  placeholder="e.g. Hero, Explosion, Kannada, Scene 4"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-mono text-slate-400 mb-1">
+                  Notes / Description (optional)
+                </label>
+                <textarea
+                  rows={2}
+                  value={uploadDescription}
+                  onChange={(e) => setUploadDescription(e.target.value)}
+                  placeholder="Short production note for editors..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-purple-500/40 hover:border-purple-400 bg-slate-950/70 rounded-xl p-5 cursor-pointer transition-colors">
+                <Upload className="w-6 h-6 text-purple-400" />
+                <span className="font-bold text-white">
+                  {isUploading ? 'Uploading & Saving...' : 'Select File(s) to Upload'}
+                </span>
+                <span className="text-[10px] text-slate-400 font-mono text-center">
+                  JPG, PNG, WebP, MP3, WAV, OGG, MP4, WebM · Max 25 MB per file
+                </span>
+                <input
+                  type="file"
+                  multiple
+                  disabled={isUploading}
+                  accept="image/jpeg,image/png,image/webp,audio/mpeg,audio/wav,audio/ogg,video/mp4,video/webm,video/quicktime"
+                  onChange={(e) => handleFileUpload(e, uploadCategory)}
+                  className="hidden"
+                />
+              </label>
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <button
+                onClick={() => setShowUploadModal(false)}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl font-semibold"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: Complete Cartoon Production Library & Programming Stack */}
+      {showTechStackModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-3xl max-h-[85vh] flex flex-col bg-[#090b11] border border-cyan-500/40 rounded-2xl p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 text-xs">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3 shrink-0">
+              <div className="flex items-center gap-2 text-cyan-300 font-bold text-sm">
+                <Layers className="w-5 h-5" />
+                <span>Unified Cartoon Production Library & Programming Stack</span>
+              </div>
+              <button
+                onClick={() => setShowTechStackModal(false)}
+                className="text-slate-400 hover:text-white text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="overflow-y-auto space-y-5 pr-1">
+              <div className="space-y-2">
+                <h4 className="text-[11px] font-mono uppercase tracking-wider text-purple-300 font-bold">
+                  1. Complete 15-Category Cartoon Production Catalog
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {catalogSpecs.map((cat) => (
+                    <button
+                      key={cat.id}
+                      onClick={() => {
+                        setSelectedCategory(cat.id as AssetCategory);
+                        setShowTechStackModal(false);
+                      }}
+                      className="text-left p-2.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-purple-500/50 transition-colors space-y-1"
+                    >
+                      <div className="font-bold text-white">{cat.name}</div>
+                      <div className="text-[10px] text-slate-400 leading-snug">{cat.summary}</div>
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {cat.assetTypes.map((t) => (
+                          <span
+                            key={t}
+                            className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-[9px] font-mono text-cyan-300"
+                          >
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="text-[11px] font-mono uppercase tracking-wider text-cyan-300 font-bold">
+                  2. Core Programming Libraries & Studio Engine Stack
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {techStack.map((item) => (
+                    <div
+                      key={item.name}
+                      className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-start justify-between gap-2"
+                    >
+                      <div>
+                        <div className="font-bold text-white">{item.name}</div>
+                        <div className="text-[11px] text-slate-400">{item.purpose}</div>
+                      </div>
+                      {item.purpose.includes('Active in Studio') && (
+                        <span className="shrink-0 px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[9px] font-mono font-bold text-emerald-300">
+                          ACTIVE
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end border-t border-slate-800 pt-3 shrink-0">
+              <button
+                onClick={() => setShowTechStackModal(false)}
+                className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded-xl"
+              >
+                Done
               </button>
             </div>
           </div>

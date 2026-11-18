@@ -1,18 +1,22 @@
 // Phase 3 — Complete Media & Creative Asset Library Data Model & Catalog
 
 export type AssetCategory =
-  | 'video'
-  | 'film'
-  | 'music'
-  | 'sfx'
-  | 'voice'
-  | 'image'
   | 'character'
   | 'animation'
   | 'vfx'
+  | 'sfx'
+  | 'music'
+  | 'voice'
+  | 'background'
+  | 'prop'
+  | 'camera'
   | 'transition'
+  | 'subtitle'
   | 'color'
   | 'template'
+  | 'video'
+  | 'image'
+  | 'film'
   | '3d_asset'
   | 'project';
 
@@ -56,6 +60,9 @@ export interface UniversalAsset {
   };
   isFavorite: boolean;
   collection?: string;
+  projectId?: string;
+  projectName?: string;
+  timelineTrack?: string;
   addedAt: string;
   usageCount: number;
 }
@@ -70,20 +77,24 @@ export interface AssetCollection {
 }
 
 export const ASSET_CATEGORIES: { id: AssetCategory; name: string; icon: string; description: string; count: number }[] = [
-  { id: 'video', name: 'Video Library', icon: '🎬', description: 'Stock footage, cinematic clips, nature, cities, action, lifestyle', count: 18 },
-  { id: 'film', name: 'Film Library', icon: '🎥', description: 'Film scenes, cinematic references, shot examples, film templates', count: 14 },
-  { id: 'music', name: 'Music Library', icon: '🎵', description: 'Background music, cinematic scores, emotional & orchestral music', count: 16 },
-  { id: 'sfx', name: 'Sound Effects (SFX)', icon: '🔊', description: 'Explosions, rain, thunder, footsteps, weapons and impacts', count: 24 },
-  { id: 'voice', name: 'Voice Library', icon: '🎙️', description: 'AI voices, narration, character voices, voice-over', count: 12 },
-  { id: 'image', name: 'Image Library', icon: '🎨', description: 'Backgrounds, textures, posters, photographs & illustrations', count: 20 },
-  { id: 'character', name: 'Character Library', icon: '🧍', description: '2D characters, 3D characters, costumes, expressions & poses', count: 10 },
-  { id: 'animation', name: 'Animation Library', icon: '🎞️', description: 'Character movements, motion graphics, animated objects & scenes', count: 12 },
-  { id: 'vfx', name: 'VFX Library', icon: '✨', description: 'Fire, smoke, particles, lightning, explosions, green-screen effects', count: 15 },
-  { id: 'transition', name: 'Transition Library', icon: '🔄', description: 'Fade, dissolve, zoom, whip, cinematic wipe transitions', count: 14 },
-  { id: 'color', name: 'Color Library', icon: '🎨', description: 'LUTs, color-grading presets & cinematic looks', count: 16 },
-  { id: 'template', name: 'Template Library', icon: '📝', description: 'Intro, outro, titles, credits, subtitles & film templates', count: 14 },
-  { id: '3d_asset', name: '3D Asset Library', icon: '🧊', description: 'Models, environments, props, materials & studio lighting', count: 12 },
-  { id: 'project', name: 'Project Asset Library', icon: '📦', description: 'All files uploaded or generated for each film', count: 8 },
+  { id: 'character', name: 'Characters', icon: '🧍', description: 'Male, female, children, villains, heroes, character models & rigs', count: 14 },
+  { id: 'animation', name: 'Animation', icon: '🎞️', description: 'Walking, running, fighting, jumping, facial expressions & motion cycles', count: 16 },
+  { id: 'vfx', name: 'VFX', icon: '✨', description: 'Fire, smoke, explosions, lightning, magic circles, particles & glow', count: 18 },
+  { id: 'sfx', name: 'SFX', icon: '🔊', description: 'Punches, footsteps, weapons, wind, rain, thunder & impacts', count: 24 },
+  { id: 'music', name: 'Music', icon: '🎵', description: 'Background music, cinematic, emotional, action & comedy scores', count: 16 },
+  { id: 'voice', name: 'Voices', icon: '🎙️', description: 'Kannada, English, Hindi, Tamil, Telugu, narration & character voices', count: 12 },
+  { id: 'background', name: 'Backgrounds', icon: '🏞️', description: 'Forests, cities, castles, villages, mountains & fantasy valleys', count: 14 },
+  { id: 'prop', name: 'Props', icon: '🗡️', description: 'Weapons, vehicles, furniture, tools, lanterns & adventure objects', count: 12 },
+  { id: 'camera', name: 'Camera', icon: '📷', description: 'Zoom, pan, tilt, crane tracking & handheld shake rigs', count: 10 },
+  { id: 'transition', name: 'Transitions', icon: '🔄', description: 'Fade, dissolve, wipe, flash & cinematic transitions', count: 14 },
+  { id: 'subtitle', name: 'Subtitles', icon: '💬', description: 'SRT, VTT, bilingual Kannada/English titles & kinetic captions', count: 8 },
+  { id: 'color', name: 'Color Grading', icon: '🎨', description: 'Anime, cinematic, fantasy, dark & bright LUT presets', count: 16 },
+  { id: 'template', name: 'Templates', icon: '📝', description: 'Cartoon intro, trailer, movie scenes & end credits', count: 14 },
+  { id: 'video', name: 'Video', icon: '🎬', description: 'Generated clips, uploaded clips & rendered cartoon scenes', count: 18 },
+  { id: 'image', name: 'Images', icon: '🖼️', description: 'AI images, textures, character sheets & storyboards', count: 20 },
+  { id: 'film', name: 'Film Scenes', icon: '🎥', description: 'Cinematic references & multi-shot film sequences', count: 14 },
+  { id: '3d_asset', name: '3D Models', icon: '🧊', description: 'GLTF/FBX rigs, environments & studio lighting', count: 12 },
+  { id: 'project', name: 'Project Assets', icon: '📦', description: 'All files uploaded or generated for each film project', count: 8 },
 ];
 
 export const INITIAL_COLLECTIONS: AssetCollection[] = [
@@ -122,6 +133,209 @@ export const INITIAL_COLLECTIONS: AssetCollection[] = [
 ];
 
 export const COMPLETE_MEDIA_CATALOG: UniversalAsset[] = [
+  // CARTOON PRODUCTION LIBRARY FEATURED ASSETS (Characters, Animation, VFX, Backgrounds, Props, Camera, Subtitles)
+  {
+    id: 'crt-char-01',
+    name: 'Maya_3D_Cartoon_Hero_Rig_v2.glb',
+    category: 'character',
+    subcategory: '3D Cartoon Heroes',
+    source: 'builtin',
+    format: 'GLB + Rigged Sheet',
+    resolution: '4096x4096 PBR',
+    size: '48 MB',
+    thumbnail: '/assets/images/cartoon_character_hero_1794924310265.jpg',
+    mediaUrl: '/assets/images/cartoon_character_hero_1794924310265.jpg',
+    description: 'Stylized 3D cartoon explorer hero with full facial expression blendshapes, lip-sync visemes, and locked seed consistency.',
+    tags: ['Character', '3D Cartoon', 'Hero', 'Rigged', 'Expressions'],
+    license: {
+      type: 'Royalty-Free Worldwide',
+      commercialUse: true,
+      attribution: 'ZKMAP STUDIO Cartoon Production Library',
+      certificateId: 'ZK-CRT-2026-0101',
+      verified: true,
+    },
+    specs: { polyCount: '64,200 Tris', aspect: '16:9' },
+    isFavorite: true,
+    addedAt: '2026-11-17',
+    usageCount: 38,
+  },
+  {
+    id: 'crt-anim-01',
+    name: 'Hero_Walk_Run_Fight_Motion_Pack.fbx',
+    category: 'animation',
+    subcategory: 'Character Motion Cycles',
+    source: 'builtin',
+    format: 'FBX / Motion Data',
+    duration: '00:16',
+    size: '24 MB',
+    thumbnail: '/assets/images/cartoon_adventure_thumb_1794924309261.jpg',
+    mediaUrl: '/assets/images/cartoon_adventure_thumb_1794924309261.jpg',
+    description: 'Complete biped cartoon animation library: walking, running, combat idle, quick turn, jumping, and expressive hand gestures.',
+    tags: ['Animation', 'Walk Cycle', 'Run', 'Fighting', 'Biped Rig'],
+    license: {
+      type: 'Royalty-Free Worldwide',
+      commercialUse: true,
+      attribution: 'ZKMAP STUDIO Cartoon Production Library',
+      certificateId: 'ZK-CRT-2026-0102',
+      verified: true,
+    },
+    specs: { fps: 24, aspect: '16:9' },
+    isFavorite: true,
+    addedAt: '2026-11-17',
+    usageCount: 52,
+  },
+  {
+    id: 'crt-vfx-01',
+    name: 'Cartoon_Fire_Magic_Lightning_Smoke_VFX_Pack.mov',
+    category: 'vfx',
+    subcategory: 'Cartoon 2D/3D VFX Pack',
+    source: 'builtin',
+    format: 'ProRes 4444 Alpha',
+    resolution: '3840x2160 (4K Alpha)',
+    duration: '00:12',
+    size: '410 MB',
+    thumbnail: '/assets/images/cartoon_vfx_explosions_1794980039460.jpg',
+    mediaUrl: '/assets/images/cartoon_vfx_explosions_1794980039460.jpg',
+    description: 'Cel-shaded cartoon VFX pack including fire explosions, glowing magic circles, electric lightning bolts, hit sparks, and smoke puffs.',
+    tags: ['VFX', 'Fire', 'Explosion', 'Magic Circle', 'Lightning', 'Smoke'],
+    license: {
+      type: 'Royalty-Free Worldwide',
+      commercialUse: true,
+      attribution: 'ZKMAP STUDIO Cartoon Production Library',
+      certificateId: 'ZK-CRT-2026-0103',
+      verified: true,
+    },
+    specs: { codec: 'ProRes 4444', fps: 24, aspect: '16:9' },
+    isFavorite: true,
+    addedAt: '2026-11-17',
+    usageCount: 71,
+  },
+  {
+    id: 'crt-bg-01',
+    name: 'Enchanted_Emerald_Forest_Background_4K.png',
+    category: 'background',
+    subcategory: 'Forests & Fantasy',
+    source: 'builtin',
+    format: 'PNG 16-bit',
+    resolution: '3840x2160 (4K)',
+    size: '18.4 MB',
+    thumbnail: '/assets/images/cartoon_forest_bg_1794980040735.jpg',
+    mediaUrl: '/assets/images/cartoon_forest_bg_1794980040735.jpg',
+    description: 'Painterly 2D cartoon forest clearing background with volumetric sunbeams, mossy ancient trees, and glowing fireflies.',
+    tags: ['Background', 'Forest', 'Fantasy', 'Cartoon Scene', 'Environment'],
+    license: {
+      type: 'Royalty-Free Worldwide',
+      commercialUse: true,
+      attribution: 'ZKMAP STUDIO Cartoon Production Library',
+      certificateId: 'ZK-CRT-2026-0104',
+      verified: true,
+    },
+    specs: { aspect: '16:9', colorSpace: 'sRGB' },
+    isFavorite: true,
+    addedAt: '2026-11-17',
+    usageCount: 44,
+  },
+  {
+    id: 'crt-bg-02',
+    name: 'Sunny_Cartoon_Village_Square_4K.jpg',
+    category: 'background',
+    subcategory: 'Cities & Villages',
+    source: 'builtin',
+    format: 'JPG Master',
+    resolution: '3840x2160 (4K)',
+    size: '12.1 MB',
+    thumbnail: '/assets/images/cartoon_short_city_1794924309971.jpg',
+    mediaUrl: '/assets/images/cartoon_short_city_1794924309971.jpg',
+    description: 'Vibrant stylized European cartoon town square with cobblestone lanes, warm daylight, and layered parallax depth.',
+    tags: ['Background', 'City', 'Village', 'Daylight', 'Cartoon'],
+    license: {
+      type: 'Royalty-Free Worldwide',
+      commercialUse: true,
+      attribution: 'ZKMAP STUDIO Cartoon Production Library',
+      certificateId: 'ZK-CRT-2026-0105',
+      verified: true,
+    },
+    specs: { aspect: '16:9', colorSpace: 'sRGB' },
+    isFavorite: false,
+    addedAt: '2026-11-17',
+    usageCount: 29,
+  },
+  {
+    id: 'crt-prop-01',
+    name: 'Adventure_Lantern_Sword_Compass_Props_Pack.glb',
+    category: 'prop',
+    subcategory: 'Tools, Weapons & Objects',
+    source: 'builtin',
+    format: 'GLB + PNG Cutouts',
+    resolution: '4096x4096 PBR',
+    size: '34 MB',
+    thumbnail: '/assets/images/cartoon_props_pack_1794980048011.jpg',
+    mediaUrl: '/assets/images/cartoon_props_pack_1794980048011.jpg',
+    description: 'Cartoon production prop bundle: glowing brass lantern, rune sword, explorer backpack, vintage compass, and treasure chest.',
+    tags: ['Props', 'Weapons', 'Tools', 'Objects', '3D Cartoon'],
+    license: {
+      type: 'Royalty-Free Worldwide',
+      commercialUse: true,
+      attribution: 'ZKMAP STUDIO Cartoon Production Library',
+      certificateId: 'ZK-CRT-2026-0106',
+      verified: true,
+    },
+    specs: { polyCount: '18,500 Tris', aspect: '16:9' },
+    isFavorite: true,
+    addedAt: '2026-11-17',
+    usageCount: 33,
+  },
+  {
+    id: 'crt-cam-01',
+    name: 'Dynamic_Action_Zoom_Pan_Shake_Camera_Rig.json',
+    category: 'camera',
+    subcategory: 'Camera Motion Presets',
+    source: 'builtin',
+    format: 'Camera Keyframe Rig',
+    duration: '00:08',
+    size: '42 KB',
+    thumbnail: '/assets/images/cinema_soundstage_set_1794406569758.jpg',
+    mediaUrl: '/assets/images/cinema_soundstage_set_1794406569758.jpg',
+    description: 'Reusable camera rig preset featuring smooth dolly zoom, whip pan, tilt reveal, and impact camera shake curves.',
+    tags: ['Camera', 'Zoom', 'Pan', 'Tilt', 'Shake', 'Tracking'],
+    license: {
+      type: 'Royalty-Free Worldwide',
+      commercialUse: true,
+      attribution: 'ZKMAP STUDIO Cartoon Production Library',
+      certificateId: 'ZK-CRT-2026-0107',
+      verified: true,
+    },
+    specs: { fps: 24, aspect: '16:9' },
+    isFavorite: false,
+    addedAt: '2026-11-17',
+    usageCount: 25,
+  },
+  {
+    id: 'crt-sub-01',
+    name: 'Bilingual_Kannada_English_Cartoon_Captions.srt',
+    category: 'subtitle',
+    subcategory: 'SRT / VTT Subtitles',
+    source: 'builtin',
+    format: 'SRT + WebVTT',
+    duration: '00:16',
+    size: '14 KB',
+    thumbnail: '/assets/images/feature_film_timeline_1794901011133.jpg',
+    mediaUrl: '/assets/images/feature_film_timeline_1794901011133.jpg',
+    description: 'Synchronized cartoon film subtitle template with clean outlined readability for Kannada, English, Hindi, Tamil, and Telugu.',
+    tags: ['Subtitles', 'SRT', 'VTT', 'Captions', 'Titles'],
+    license: {
+      type: 'Creative Commons CC0',
+      commercialUse: true,
+      attribution: 'ZKMAP STUDIO Cartoon Production Library',
+      certificateId: 'ZK-CRT-2026-0108',
+      verified: true,
+    },
+    specs: { aspect: '16:9' },
+    isFavorite: false,
+    addedAt: '2026-11-17',
+    usageCount: 41,
+  },
+
   // 1. VIDEO LIBRARY
   {
     id: 'vid-101',

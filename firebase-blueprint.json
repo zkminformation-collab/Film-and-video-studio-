@@ -1,0 +1,267 @@
+{
+  "entities": {
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Authenticated user account, subscription tier, and credit/storage quota usage.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name of the creator",
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "User email address",
+          "maxLength": 200
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "admin"],
+          "description": "Account role"
+        },
+        "plan": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Active subscription tier name"
+        },
+        "creditsRemaining": {
+          "type": "number",
+          "description": "Available monthly synthesis and video credits"
+        },
+        "creditsUsedThisMonth": {
+          "type": "number",
+          "description": "Total credits consumed in current cycle"
+        },
+        "storageUsedMb": {
+          "type": "number",
+          "description": "Total library storage used in MB"
+        },
+        "projectsCount": {
+          "type": "number",
+          "description": "Number of active film projects"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of account registration"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last profile update"
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "email",
+        "role",
+        "plan",
+        "creditsRemaining",
+        "creditsUsedThisMonth",
+        "storageUsedMb",
+        "projectsCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StudioProjectRecord": {
+      "title": "StudioProjectRecord",
+      "description": "User film and video production project persisted in Firestore.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "genre": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Development", "Pre-Production", "Production", "Post-Production", "Completed"]
+        },
+        "aspectRatio": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "resolution": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "title",
+        "genre",
+        "status",
+        "aspectRatio",
+        "resolution",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LibraryAssetRecord": {
+      "title": "LibraryAssetRecord",
+      "description": "Saved user asset (AI voice, music, image, rendered video, or manhwa reel) in My Library.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "category": {
+          "type": "string",
+          "enum": ["footage", "audio", "sfx", "stills", "vfx"]
+        },
+        "format": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "duration": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "size": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "thumbnail": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "provider": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "name",
+        "category",
+        "format",
+        "duration",
+        "size",
+        "url",
+        "thumbnail",
+        "provider",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UsageActivityRecord": {
+      "title": "UsageActivityRecord",
+      "description": "Immutable studio usage and generation telemetry entry for user dashboard and admin auditing.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "tool": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "provider": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "creditsUsed": {
+          "type": "number"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "tool",
+        "provider",
+        "creditsUsed",
+        "summary",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "User profiles, subscription tiers, and usage counters."
+    },
+    "/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/StudioProjectRecord" },
+      "description": "User film production projects."
+    },
+    "/library_assets/{assetId}": {
+      "schema": { "$ref": "#/entities/LibraryAssetRecord" },
+      "description": "User saved images, videos, voiceovers, and audio assets."
+    },
+    "/usage_logs/{logId}": {
+      "schema": { "$ref": "#/entities/UsageActivityRecord" },
+      "description": "Per-user AI generation and export activity logs."
+    }
+  }
+}

@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+.data/
+# Local secrets written by `elevenlabs onboard`
+/.env.local

@@ -20,18 +20,18 @@
   font-family: 'Cinzel', serif;
 }
 
-/* Custom dark scrollbar for timeline and editors */
+/* Subtle scrollbar matching editorial studio aesthetic */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #090d16;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
+  background: rgba(113, 113, 122, 0.35);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: rgba(113, 113, 122, 0.55);
 }

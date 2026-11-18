@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "1044433389303",
+    "firebase_url": "https://all-tipes-details.firebaseio.com",
+    "project_id": "all-tipes-details",
+    "storage_bucket": "all-tipes-details.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1044433389303:android:506c70c2605cdcb96375f2",
+        "android_client_info": {
+          "package_name": "zero0.cf.zerokingmaker"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDtluCPBXOOfvQnGppJRndaeZ7HdwZg-60"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

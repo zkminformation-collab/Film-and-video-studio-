@@ -24,6 +24,7 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ activeFilm }
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiRole, setAiRole] = useState('Chief Science Officer / Cryptographer');
   const [aiArchetype, setAiArchetype] = useState('Obsessive Visionary');
+  const [scriptAssigned, setScriptAssigned] = useState(false);
 
   const selectedChar = characters.find((c) => c.id === selectedCharId) || characters[0];
 
@@ -284,12 +285,13 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ activeFilm }
               <button
                 onClick={() => {
                   soundFx.playScannerBeep();
-                  alert(`Assigned ${selectedChar.name} dialogue template to Screenplay Writer!`);
+                  setScriptAssigned(true);
+                  setTimeout(() => setScriptAssigned(false), 3000);
                 }}
                 className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 text-xs font-medium"
               >
-                <FileText className="w-3.5 h-3.5 text-sky-400" />
-                <span>Insert Character into Script</span>
+                {scriptAssigned ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <FileText className="w-3.5 h-3.5 text-sky-400" />}
+                <span>{scriptAssigned ? `Assigned ${selectedChar.name} to Screenplay` : 'Insert Character into Script'}</span>
               </button>
             </div>
           </div>

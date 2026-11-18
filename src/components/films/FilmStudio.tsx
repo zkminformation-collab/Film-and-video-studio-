@@ -15,6 +15,7 @@ import { soundFx } from '../../utils/audioSynth';
 
 interface FilmStudioProps {
   activeFilm: FilmProject;
+  onDeleteFilm?: (filmId: string) => void;
 }
 
 interface SlateTake {
@@ -27,12 +28,13 @@ interface SlateTake {
   notes: string;
 }
 
-export const FilmStudio: React.FC<FilmStudioProps> = ({ activeFilm }) => {
+export const FilmStudio: React.FC<FilmStudioProps> = ({ activeFilm, onDeleteFilm }) => {
   const [scene, setScene] = useState('14');
   const [take, setTake] = useState(3);
   const [roll, setRoll] = useState('A04');
   const [isClapping, setIsClapping] = useState(false);
   const [syncTone, setSyncTone] = useState(true);
+  const [confirmDeleteFilm, setConfirmDeleteFilm] = useState(false);
 
   const [takes, setTakes] = useState<SlateTake[]>([
     { id: 't-1', scene: '14', take: 1, roll: 'A04', status: 'Hold', timecode: '10:14:22:04', notes: 'Camera shadow on basalt rock' },
@@ -74,6 +76,11 @@ export const FilmStudio: React.FC<FilmStudioProps> = ({ activeFilm }) => {
     setTakes((prev) => prev.map((t) => (t.id === id ? { ...t, status } : t)));
   };
 
+  const handleDeleteTake = (id: string) => {
+    soundFx.playWhoosh();
+    setTakes((prev) => prev.filter((t) => t.id !== id));
+  };
+
   return (
     <div className="flex-1 overflow-y-auto p-6 bg-slate-950 text-slate-100 space-y-6">
       {/* Top Section: Header & Quick Stats */}
@@ -99,6 +106,36 @@ export const FilmStudio: React.FC<FilmStudioProps> = ({ activeFilm }) => {
             <Printer className="w-3.5 h-3.5" />
             <span>Print Slate Card</span>
           </button>
+
+          {onDeleteFilm && (
+            confirmDeleteFilm ? (
+              <div className="flex items-center gap-1.5 bg-rose-950/80 border border-rose-500/40 rounded-md p-1">
+                <button
+                  onClick={() => {
+                    onDeleteFilm(activeFilm.id);
+                    setConfirmDeleteFilm(false);
+                  }}
+                  className="px-2.5 py-1 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded"
+                >
+                  Confirm Delete Film
+                </button>
+                <button
+                  onClick={() => setConfirmDeleteFilm(false)}
+                  className="px-2 py-1 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmDeleteFilm(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded-md transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Film</span>
+              </button>
+            )
+          )}
         </div>
       </div>
 
@@ -247,6 +284,7 @@ export const FilmStudio: React.FC<FilmStudioProps> = ({ activeFilm }) => {
                     <th className="py-2.5 px-3">Timecode</th>
                     <th className="py-2.5 px-3">Decision</th>
                     <th className="py-2.5 px-3">Notes</th>
+                    <th className="py-2.5 px-3 text-right">Delete</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono-cinema">
@@ -294,6 +332,17 @@ export const FilmStudio: React.FC<FilmStudioProps> = ({ activeFilm }) => {
                       <td className="py-2.5 px-3 text-slate-300 font-sans truncate max-w-xs">
                         {t.notes}
                       </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTake(t.id)}
+                          className="p-1.5 rounded bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 transition-colors"
+                          title={`Delete Scene ${t.scene} Take ${t.take}`}
+                          aria-label={`Delete Scene ${t.scene} Take ${t.take}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -305,12 +354,19 @@ export const FilmStudio: React.FC<FilmStudioProps> = ({ activeFilm }) => {
               <button
                 onClick={() => {
                   soundFx.playScannerBeep();
-                  alert('Exported take logs in industry CSV and ALE formats.');
+                  const csv = ['Scene,Take,Roll,Status,Timecode,Notes', ...takes.map((t) => `${t.scene},${t.take},${t.roll},${t.status},${t.timecode},"${t.notes.replace(/"/g, '""')}"`)].join('\n');
+                  const blob = new Blob([csv], { type: 'text/csv' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `${activeFilm.title.replace(/\s+/g, '_')}_TakeLogs.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
                 }}
                 className="flex items-center gap-1 text-amber-400 hover:text-amber-300 font-medium"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Export ALE</span>
+                <span>Export CSV / ALE</span>
               </button>
             </div>
           </div>

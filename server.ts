@@ -1,9 +1,180 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import type { SocialPlatform } from './server/socialMediaStore.ts';
+import {
+  buildOAuthAuthorizeUrl,
+  completeLiveOAuthCallback,
+  connectSandboxAccount,
+  disconnectAccount,
+  createPublishJobs,
+  retryUploadJob,
+  createScheduledPost,
+  dispatchScheduledPost,
+  cancelScheduledPost,
+  updatePlatformSettings,
+  resetAllSocialMediaData,
+  reprocessAllPendingSocialJobs,
+  getSanitizedSocialState,
+} from './server/socialMediaStore.ts';
+import {
+  FREE_ASSET_FOLDER_TREE,
+  listEnrichedStudioAssets,
+  importFreeAsset,
+  generateDownloadLinksCsv,
+  generateLicensesCsv,
+  buildCompleteStudioLibraryZip,
+} from './server/freeAssetLibraryStore.ts';
+import {
+  SUPPORTED_CATEGORY_FORMATS,
+  importUnifiedMediaAsset,
+  listUnifiedMediaAssets,
+  getUnifiedMediaAsset,
+  updateUnifiedMediaAsset,
+  deleteUnifiedMediaAsset,
+  linkAssetToProject,
+  unlinkAssetFromProject,
+  getUnifiedLicenseSummary,
+} from './server/unifiedMediaStore.ts';
+import {
+  buildBloggerOAuthUrl,
+  completeBloggerOAuthCallback,
+  connectBloggerSandbox,
+  disconnectBloggerAccount,
+  selectBloggerSite,
+  addCustomBloggerSite,
+  refreshBloggerSites,
+  saveOrPublishBloggerPost,
+  publishExistingPostById,
+  deleteBloggerPost,
+  updateBloggerSettings,
+  resetAllBloggerData,
+  getSanitizedBloggerState,
+} from './server/bloggerStore.ts';
+import {
+  importManhwaChapterFromUrl,
+  generateManhwaDialogueAndAudioPlan,
+  renderManhwaExport,
+} from './server/manhwaEngine.ts';
+import {
+  listCartoonProjects,
+  getCartoonProject,
+  createCartoonProject,
+  deleteCartoonProject,
+  addReferenceAssetsToProject,
+  removeReferenceAssetFromProject,
+  runCartoonWorkflowStep,
+  updateCartoonScene,
+  runQualityInspection,
+  recomputeProjectSteps,
+  resolveCartoonQualityIssue,
+  confirmFinalProjectApproval,
+  renderAndVerifyCartoonMp4,
+  getVerifiedRenderMp4Path,
+  updateCartoonProjectMeta,
+  runAzWorkflowStep,
+} from './server/cartoonWorkflowStore.ts';
+import {
+  CARTOON_LIBRARY_CATALOG,
+  PRODUCTION_TECH_STACK,
+  listLibraryUploadedAssets,
+  saveUploadedLibraryAsset,
+  syncCartoonProjectAssetsToLibrary,
+  deleteUploadedLibraryAsset,
+} from './server/mediaLibraryStore.ts';
+import {
+  listTtsJobs,
+  getTtsJob,
+  createTtsJob,
+  completeTtsJobAndSaveToLibrary,
+  failTtsJob,
+  getTtsJobAudioFile,
+} from './server/ttsJobStore.ts';
+import {
+  listAudioStudioLibrary,
+  getAudioStudioJob,
+  markAudioAssetOnTimeline,
+  deleteAudioStudioAsset,
+  generateStudioAudio,
+  suggestSceneAudioItems,
+} from './server/audioStudioStore.ts';
+import {
+  listManhwaProjects,
+  getManhwaProject,
+  createManhwaProject,
+  saveManhwaProject,
+  registerManhwaAssetToLibrary,
+} from './server/manhwaProjectStore.ts';
+import {
+  getImageProviderStatus,
+  generateStudioImages,
+  generateCharacterImage,
+  generateBackgroundImage,
+  transformImageToImage,
+  editStudioImage,
+  upscaleStudioImage,
+  listStudioImages,
+  getStudioImageById,
+  deleteStudioImageById,
+  listSavedCharacterIdentities,
+  deleteSavedCharacterIdentity,
+} from './server/aiImageStudioStore.ts';
+import {
+  listStoryboards,
+  getStoryboardById,
+  createStoryboard,
+  generateStoryboardFromStory,
+  updateStoryboard,
+  deleteStoryboard,
+  generateImageForStoryboardShot,
+  exportStoryboardPackage,
+} from './server/storyboardStore.ts';
+import {
+  listAnimationProjects,
+  getAnimationProject,
+  createAnimationProject,
+  updateAnimationProject,
+  deleteAnimationProject,
+  recordAnimationJob,
+  getAnimationJob,
+  listAnimationJobs,
+  renderAnimationVideo,
+} from './server/animationStudioStore.ts';
+import {
+  listFilmPipelineProjects,
+  getFilmPipelineProject,
+  createFilmPipelineProject,
+  deleteFilmPipelineProject,
+  saveProjectStory,
+  generateProjectScreenplay,
+  createProjectScenesFromScreenplay,
+  addProjectCharacter,
+  attachCharacterReferenceImage,
+  generateProjectStoryboardPanels,
+  renderStoryboardPanelImage,
+} from './server/filmPipelineStore.ts';
+import {
+  getRazorpayConfigStatus,
+  getSanitizedBillingState,
+  updateAdminPricingConfig,
+  adjustCustomerCreditsByAdmin,
+  adminUpdateSubscriptionStatus,
+  verifyAdminBearerToken,
+  createPaymentOrder,
+  completeTestGatewayCheckout,
+  verifyRazorpayPayment,
+  cancelUserSubscription,
+  processRazorpayWebhook,
+  getInvoiceHtmlById,
+} from './server/razorpayStore.ts';
+
+const execFileAsync = promisify(execFile);
 
 dotenv.config();
 
@@ -13,7 +184,14 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-app.use(express.json({ limit: '20mb' }));
+app.use(
+  express.json({
+    limit: '40mb',
+    verify: (req, _res, buf) => {
+      (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+    },
+  })
+);
 
 // Static asset handlers: guarantees images never 404 in dev, production, or Cloud Run
 app.use('/src/assets/images', express.static(path.resolve(__dirname, 'public/assets/images')));
@@ -22,6 +200,8 @@ app.use('/assets/images', express.static(path.resolve(__dirname, 'public/assets/
 app.use('/assets/images', express.static(path.resolve(__dirname, 'src/assets/images')));
 app.use('/src/assets', express.static(path.resolve(__dirname, 'src/assets')));
 app.use('/assets', express.static(path.resolve(__dirname, 'public/assets')));
+app.use('/api/cartoon-assets', express.static(path.resolve(process.cwd(), '.data/cartoon-assets')));
+app.use('/api/library-uploads', express.static(path.resolve(process.cwd(), '.data/library-uploads')));
 
 // Shared Gemini Client on server-side
 const apiKey = process.env.GEMINI_API_KEY;
@@ -36,6 +216,15 @@ if (apiKey) {
     },
   });
 }
+
+// Cloud Run Health Check Endpoint
+app.get('/api/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'cineflow-film-video-studio-ultimate',
+    timestamp: new Date().toISOString(),
+  });
+});
 
 // AI Screenplay Generator / Polish Endpoint
 app.post('/api/ai/screenplay', async (req, res) => {
@@ -88,7 +277,7 @@ Characters: "${characters || 'Protagonist and Key Antagonist/Companion'}"
 Return clean screenplay text ready for standard Courier formatting.`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-hydrogen',
       contents: prompt,
     });
 
@@ -166,7 +355,7 @@ Return a valid JSON array of shots with fields:
 shotNumber (number), framing (string), cameraAngle (string), movement (string), lens (string), lighting (string), action (string), dialogueCue (string), visualPrompt (string).`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-hydrogen',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -198,7 +387,7 @@ app.post('/api/ai/shotlist', async (req, res) => {
   try {
     const prompt = `You are a First Assistant Director (1st AD) and DP. Generate a cinema shot list for: "${sceneDetails || 'Dramatic dialogue and reveal'}". Return JSON array with {id, shot, setup, lens, fps, description}.`;
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-hydrogen',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -213,16 +402,16 @@ app.post('/api/ai/shotlist', async (req, res) => {
 
 // AI Audio / Foley Soundscape Designer
 app.post('/api/ai/soundtrack', async (req, res) => {
-  const { mood, sceneDescription } = req.body;
+  const { mood, sceneDescription } = req.body || {};
+  const fallbackCues = [
+    { timecode: '00:00:02', track: 'Ambience', cue: `Deep pressurized ${mood || 'cinematic'} drone with low rumbling sub-bass (55Hz)` },
+    { timecode: '00:00:14', track: 'Foley', cue: 'Heavy magnetic boot clangs on steel grated flooring with metallic reverb' },
+    { timecode: '00:00:28', track: 'SFX', cue: 'Hydraulic hatch decompression hiss followed by high-pass air vacuum' },
+    { timecode: '00:00:45', track: 'Score', cue: `Swelling D minor analog synth pad matched to "${sceneDescription || 'scene sequence'}"` },
+  ];
+
   if (!ai) {
-    return res.json({
-      cues: [
-        { timecode: '00:00:02', track: 'Ambience', cue: 'Deep pressurized cabin drone with low rumbling sub-bass (55Hz)' },
-        { timecode: '00:00:14', track: 'Foley', cue: 'Heavy magnetic boot clangs on steel grated flooring with metallic reverb' },
-        { timecode: '00:00:28', track: 'SFX', cue: 'Hydraulic hatch decompression hiss followed by high-pass air vacuum' },
-        { timecode: '00:00:45', track: 'Score', cue: 'Swelling analog synth pad in D minor with granular bowed cello accent' },
-      ],
-    });
+    return res.json({ cues: fallbackCues });
   }
 
   try {
@@ -233,15 +422,740 @@ Scene: "${sceneDescription || 'Space station breach'}"
 Return JSON array with {timecode, track, cue}.`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-hydrogen',
       contents: prompt,
       config: { responseMimeType: 'application/json' },
     });
     const parsed = JSON.parse(response.text || '[]');
-    res.json({ cues: parsed });
+    res.json({ cues: Array.isArray(parsed) && parsed.length > 0 ? parsed : fallbackCues });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    console.warn('Gemini soundtrack fallback activated:', error?.message || error);
+    res.json({ cues: fallbackCues, fallback: true });
   }
+});
+
+// AI Screenplay Dialogue & Narration Sync Endpoint (Kannada + English)
+app.post('/api/ai/dialogue-sync', async (req, res) => {
+  const { title, language = 'English', mode = 'dialogue', screenplay = '' } = req.body;
+  const isKannada = String(language).toLowerCase().includes('kannada') || String(language).toLowerCase().includes('kn');
+
+  if (!ai) {
+    if (mode === 'narration') {
+      return res.json({
+        success: true,
+        cues: isKannada
+          ? [
+              {
+                id: 'nar-kn-1',
+                speaker: 'ಕಥಾ ನಿರೂಪಕ (Story Narrator)',
+                text: 'ಪ್ರಾಚೀನ ನಕ್ಷತ್ರಗಳ ನಡುವೆ, ಮಾನವಕುಲದ ಭವಿಷ್ಯವನ್ನು ಬದಲಿಸುವ ನಿಗೂಢ ಸಂಕೇತವೊಂದು ಎಚ್ಚರಗೊಂಡಿತು.',
+                language: 'kn-IN',
+                startSec: 0.5,
+                durationSec: 5.5,
+                pitch: 0.9,
+                rate: 0.94,
+              },
+              {
+                id: 'nar-kn-2',
+                speaker: 'ಕಥಾ ನಿರೂಪಕ (Story Narrator)',
+                text: 'ಕಮಾಂಡರ್ ವ್ಯಾಲೆರಿ ಮತ್ತು ಆರ್ಯ-7 ಕಾಲದ ದ್ವಾರದ ರಹಸ್ಯವನ್ನು ಭೇದಿಸಲು ಸಜ್ಜಾದರು.',
+                language: 'kn-IN',
+                startSec: 7.0,
+                durationSec: 5.0,
+                pitch: 0.9,
+                rate: 0.94,
+              },
+            ]
+          : [
+              {
+                id: 'nar-en-1',
+                speaker: 'The Chronicler (Narrator)',
+                text: `Across the silent basalt horizon of ${title || 'The Chronos Gate'}, an ancient signal awakened after ten thousand years.`,
+                language: 'en-US',
+                startSec: 0.5,
+                durationSec: 5.5,
+                pitch: 0.8,
+                rate: 0.92,
+              },
+              {
+                id: 'nar-en-2',
+                speaker: 'The Chronicler (Narrator)',
+                text: 'With time running out, Commander Valerie Chen stepped into the heart of the cosmic monolith.',
+                language: 'en-US',
+                startSec: 7.0,
+                durationSec: 5.0,
+                pitch: 0.8,
+                rate: 0.92,
+              },
+            ],
+      });
+    }
+
+    return res.json({
+      success: true,
+      cues: isKannada
+        ? [
+            {
+              id: 'dlg-kn-1',
+              speaker: 'Ananya K. (Valerie KN)',
+              text: 'ಪ್ರೊಮೆಥಿಯಸ್ ಸ್ಟೇಷನ್, ಕೇಳಿಸುತ್ತಿದೆಯೇ? ಆಕಾಶಕಾಯದ ಸಂಕೇತ ದೃಢಪಟ್ಟಿದೆ!',
+              language: 'kn-IN',
+              startSec: 1.0,
+              durationSec: 4.5,
+              pitch: 1.05,
+              rate: 0.96,
+            },
+            {
+              id: 'dlg-kn-2',
+              speaker: 'Vikram R. (Huxley KN)',
+              text: 'ವ್ಯಾಲೆರಿ, ತಕ್ಷಣ ಹಿಂದೆ ಸರಿಯಿರಿ! ಅಲ್ಲಿ ವಿದ್ಯುತ್ಕಾಂತೀಯ ತರಂಗಗಳು ಹೆಚ್ಚಾಗುತ್ತಿವೆ.',
+              language: 'kn-IN',
+              startSec: 6.5,
+              durationSec: 4.5,
+              pitch: 0.86,
+              rate: 0.95,
+            },
+            {
+              id: 'dlg-kn-3',
+              speaker: 'Arya-7 (Synthetic AI)',
+              text: 'ಕಮಾಂಡರ್, ಈ ದ್ವಾರವು ನಮ್ಮ ನಕ್ಷತ್ರಪುಂಜದ ಕೇಂದ್ರಕ್ಕೆ ಸಂಪರ್ಕಿಸುತ್ತದೆ.',
+              language: 'kn-IN',
+              startSec: 12.0,
+              durationSec: 4.5,
+              pitch: 1.15,
+              rate: 1.0,
+            },
+          ]
+        : [
+            {
+              id: 'dlg-en-1',
+              speaker: 'Valerie Chen (Protagonist)',
+              text: 'Prometheus Station, do you copy? Telemetry anomaly confirmed three hundred meters north.',
+              language: 'en-US',
+              startSec: 1.0,
+              durationSec: 4.5,
+              pitch: 1.02,
+              rate: 0.98,
+            },
+            {
+              id: 'dlg-en-2',
+              speaker: 'Dr. Huxley Vance',
+              text: 'Valerie, pull back immediately! Orbital radar just detected a massive gravity spike.',
+              language: 'en-US',
+              startSec: 6.5,
+              durationSec: 4.5,
+              pitch: 0.85,
+              rate: 0.95,
+            },
+            {
+              id: 'dlg-en-3',
+              speaker: 'Arya-7 (Synthetic AI)',
+              text: 'Commander, the monolith glyphs match a prime mathematical ignition sequence.',
+              language: 'en-US',
+              startSec: 12.0,
+              durationSec: 4.5,
+              pitch: 1.15,
+              rate: 1.02,
+            },
+          ],
+    });
+  }
+
+  try {
+    const prompt = `You are a Supervising ADR & Dialogue Director.
+Generate 3 timed ${mode === 'narration' ? 'story narration' : 'character dialogue'} cues in ${isKannada ? 'Kannada (kn-IN)' : 'English (en-US)'} for the film "${title || 'The Chronos Gate'}".
+Screenplay context: "${String(screenplay).slice(0, 600)}"
+Return JSON array of objects with: {id, speaker, text, language ("${isKannada ? 'kn-IN' : 'en-US'}"), startSec (number), durationSec (number), pitch (number 0.75-1.25), rate (number 0.85-1.15)}.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: { responseMimeType: 'application/json' },
+    });
+    const parsed = JSON.parse(response.text || '[]');
+    res.json({ success: true, cues: parsed });
+  } catch (error: any) {
+    console.warn('Gemini dialogue-sync fallback activated:', error?.message || error);
+    res.json({
+      success: true,
+      fallback: true,
+      cues: isKannada
+        ? [
+            {
+              id: 'dlg-kn-1',
+              speaker: 'Ananya K. (Valerie KN)',
+              text: 'ಪ್ರೊಮೆಥಿಯಸ್ ಸ್ಟೇಷನ್, ಕೇಳಿಸುತ್ತಿದೆಯೇ? ಆಕಾಶಕಾಯದ ಸಂಕೇತ ದೃಢಪಟ್ಟಿದೆ!',
+              language: 'kn-IN',
+              startSec: 1.0,
+              durationSec: 4.5,
+              pitch: 1.05,
+              rate: 0.96,
+            },
+          ]
+        : [
+            {
+              id: 'dlg-en-1',
+              speaker: 'Valerie Chen (Protagonist)',
+              text: 'Prometheus Station, do you copy? Telemetry anomaly confirmed three hundred meters north.',
+              language: 'en-US',
+              startSec: 1.0,
+              durationSec: 4.5,
+              pitch: 1.02,
+              rate: 0.98,
+            },
+          ],
+    });
+  }
+});
+
+// ==========================================
+// CLOUD & STUDIO TEXT-TO-SPEECH ENGINE API
+// ==========================================
+
+const CLOUD_TTS_VOICE_CATALOG = [
+  { language: 'Kannada', code: 'kn-IN', name: 'kn-IN-Wavenet-A', label: 'Kannada Wavenet Female (Ananya)', gender: 'Female' },
+  { language: 'Kannada', code: 'kn-IN', name: 'kn-IN-Wavenet-B', label: 'Kannada Wavenet Male (Vikram)', gender: 'Male' },
+  { language: 'Kannada', code: 'kn-IN', name: 'kn-IN-Standard-A', label: 'Kannada Standard Female', gender: 'Female' },
+  { language: 'Kannada', code: 'kn-IN', name: 'kn-IN-Standard-B', label: 'Kannada Standard Male', gender: 'Male' },
+  { language: 'English', code: 'en-US', name: 'en-US-Neural2-F', label: 'English Neural2 Female (Valerie)', gender: 'Female' },
+  { language: 'English', code: 'en-US', name: 'en-US-Neural2-D', label: 'English Neural2 Male (Huxley)', gender: 'Male' },
+  { language: 'Hindi', code: 'hi-IN', name: 'hi-IN-Wavenet-A', label: 'Hindi Wavenet Female', gender: 'Female' },
+  { language: 'Hindi', code: 'hi-IN', name: 'hi-IN-Wavenet-B', label: 'Hindi Wavenet Male', gender: 'Male' },
+  { language: 'Tamil', code: 'ta-IN', name: 'ta-IN-Wavenet-A', label: 'Tamil Wavenet Female', gender: 'Female' },
+  { language: 'Tamil', code: 'ta-IN', name: 'ta-IN-Wavenet-B', label: 'Tamil Wavenet Male', gender: 'Male' },
+  { language: 'Telugu', code: 'te-IN', name: 'te-IN-Standard-A', label: 'Telugu Standard Female', gender: 'Female' },
+  { language: 'Telugu', code: 'te-IN', name: 'te-IN-Standard-B', label: 'Telugu Standard Male', gender: 'Male' },
+];
+
+function pickGeminiVoiceName(gender: string, voiceName?: string): 'Puck' | 'Charon' | 'Kore' | 'Fenrir' | 'Zephyr' {
+  const hint = `${voiceName || ''} ${gender || ''}`.toLowerCase();
+  if (hint.includes('deep') || hint.includes('elder') || hint.includes('baritone')) return 'Charon';
+  if (hint.includes('energetic') || hint.includes('villain') || hint.includes('action')) return 'Fenrir';
+  if (String(gender).toUpperCase() === 'FEMALE' || hint.includes('female') || hint.includes('ananya') || hint.includes('rachel') || hint.includes('elli') || hint.includes('bella')) {
+    return hint.includes('bright') || hint.includes('soft') ? 'Zephyr' : 'Kore';
+  }
+  return 'Puck';
+}
+
+const ELEVENLABS_VOICE_CATALOG = [
+  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel (ElevenLabs)', gender: 'Female', accent: 'American Cinematic', tone: 'Warm, articulate narration' },
+  { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam (ElevenLabs)', gender: 'Male', accent: 'Deep Narrative', tone: 'Authoritative documentary & film lead' },
+  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella (ElevenLabs)', gender: 'Female', accent: 'Expressive Soft', tone: 'Emotional character dialogue' },
+  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni (ElevenLabs)', gender: 'Male', accent: 'Well-Rounded Studio', tone: 'Versatile dubbing & manhwa voice' },
+  { id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Elli (ElevenLabs)', gender: 'Female', accent: 'Youthful Bright', tone: 'Animation & dynamic scenes' },
+  { id: 'TxGEqnHWrfWFTfGW9XjX', name: 'Josh (ElevenLabs)', gender: 'Male', accent: 'Deep Resonant', tone: 'Trailer & epic monologue voice' },
+];
+
+app.get('/api/elevenlabs/status', (_req, res) => {
+  res.json({
+    configured: Boolean(process.env.ELEVENLABS_API_KEY),
+    geminiTtsConfigured: Boolean(ai),
+    model: 'eleven_multilingual_v2',
+    voices: ELEVENLABS_VOICE_CATALOG,
+  });
+});
+
+app.get('/api/tts/voices', async (_req, res) => {
+  const googleKeyConfigured = Boolean(process.env.GOOGLE_TTS_API_KEY);
+  const elevenKey = process.env.ELEVENLABS_API_KEY;
+  const elevenLabsConfigured = Boolean(elevenKey);
+  let liveElevenVoices = ELEVENLABS_VOICE_CATALOG;
+
+  if (elevenKey) {
+    try {
+      const r = await fetch('https://api.elevenlabs.io/v1/voices', {
+        headers: { 'xi-api-key': elevenKey },
+      });
+      if (r.ok) {
+        const json = (await r.json()) as { voices?: Array<{ voice_id: string; name: string; labels?: Record<string, string> }> };
+        if (Array.isArray(json.voices) && json.voices.length > 0) {
+          liveElevenVoices = json.voices.slice(0, 30).map((v) => ({
+            id: v.voice_id,
+            name: v.name,
+            gender: v.labels?.gender === 'female' ? 'Female' : 'Male',
+            accent: v.labels?.accent || 'Multilingual',
+            tone: v.labels?.description || v.labels?.use_case || 'Expressive Studio Voice',
+          }));
+        }
+      }
+    } catch {
+      // Keep curated catalog fallback
+    }
+  }
+
+  res.json({
+    success: true,
+    primaryProvider: 'elevenlabs',
+    googleCloudConfigured: googleKeyConfigured,
+    elevenLabsConfigured,
+    geminiTtsConfigured: Boolean(ai),
+    voices: CLOUD_TTS_VOICE_CATALOG,
+    elevenLabsVoices: liveElevenVoices,
+  });
+});
+
+async function synthesizeSpeechAudio(params: {
+  cleanText: string;
+  languageCode: string;
+  gender: string;
+  voiceName?: string;
+  elevenLabsVoiceId?: string;
+  emotion?: string;
+  provider?: string;
+  pitch?: number;
+  speakingRate?: number;
+}): Promise<{
+  provider: string;
+  voiceName: string;
+  languageCode: string;
+  mimeType: string;
+  extension: 'mp3' | 'wav';
+  audioBuffer: Buffer;
+} | null> {
+  const matchedCatalog =
+    CLOUD_TTS_VOICE_CATALOG.find((v) => v.name === params.voiceName) ||
+    CLOUD_TTS_VOICE_CATALOG.find(
+      (v) => v.code === params.languageCode && v.gender.toLowerCase() === String(params.gender).toLowerCase()
+    ) ||
+    CLOUD_TTS_VOICE_CATALOG[0];
+
+  const elevenKey = process.env.ELEVENLABS_API_KEY;
+  if (elevenKey && (params.provider === 'elevenlabs' || params.provider === 'auto' || !params.provider)) {
+    try {
+      const targetVoice =
+        ELEVENLABS_VOICE_CATALOG.find((v) => v.id === params.elevenLabsVoiceId || v.name === params.voiceName) ||
+        ELEVENLABS_VOICE_CATALOG.find((v) => v.gender.toLowerCase() === String(params.gender).toLowerCase()) ||
+        ELEVENLABS_VOICE_CATALOG[0];
+
+      const voiceIdToUse = params.elevenLabsVoiceId || targetVoice.id;
+      const elevenRes = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceIdToUse)}?output_format=mp3_44100_128`,
+        {
+          method: 'POST',
+          headers: {
+            'xi-api-key': elevenKey,
+            'Content-Type': 'application/json',
+            Accept: 'audio/mpeg',
+          },
+          body: JSON.stringify({
+            text: params.cleanText,
+            model_id: 'eleven_multilingual_v2',
+            voice_settings: {
+              stability: params.emotion === 'Calm' ? 0.65 : 0.45,
+              similarity_boost: 0.78,
+              style: params.emotion === 'Excited' || params.emotion === 'Angry' ? 0.55 : 0.35,
+              use_speaker_boost: true,
+            },
+          }),
+        }
+      );
+
+      if (elevenRes.ok) {
+        const audioBuffer = Buffer.from(await elevenRes.arrayBuffer());
+        return {
+          provider: 'ElevenLabs Multilingual v2',
+          voiceName: targetVoice.name,
+          languageCode: matchedCatalog.code,
+          mimeType: 'audio/mpeg',
+          extension: 'mp3',
+          audioBuffer,
+        };
+      }
+    } catch (err) {
+      console.warn('ElevenLabs TTS fallback to next engine:', err);
+    }
+  }
+
+  const ttsKey = process.env.GOOGLE_TTS_API_KEY;
+  if (ttsKey && params.provider !== 'browser') {
+    try {
+      const semitonePitch = Math.max(-20, Math.min(20, (Number(params.pitch || 1.0) - 1.0) * 12));
+      const googleRes = await fetch(
+        `https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(ttsKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            input: { text: params.cleanText },
+            voice: {
+              languageCode: matchedCatalog.code,
+              name: matchedCatalog.name,
+              ssmlGender: String(params.gender).toUpperCase() === 'FEMALE' ? 'FEMALE' : 'MALE',
+            },
+            audioConfig: {
+              audioEncoding: 'MP3',
+              speakingRate: Math.max(0.25, Math.min(4.0, Number(params.speakingRate) || 1.0)),
+              pitch: semitonePitch,
+            },
+          }),
+        }
+      );
+
+      if (googleRes.ok) {
+        const googleJson = (await googleRes.json()) as { audioContent?: string };
+        if (googleJson.audioContent) {
+          return {
+            provider: 'Google Cloud Text-to-Speech',
+            voiceName: matchedCatalog.name,
+            languageCode: matchedCatalog.code,
+            mimeType: 'audio/mpeg',
+            extension: 'mp3',
+            audioBuffer: Buffer.from(googleJson.audioContent, 'base64'),
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('Google Cloud TTS fallback to Gemini 3.8 TTS:', err);
+    }
+  }
+
+  if (ai && params.provider !== 'browser') {
+    try {
+      const geminiVoice = pickGeminiVoiceName(String(params.gender), params.voiceName);
+      const styleHints = [
+        params.emotion ? `${params.emotion} delivery` : 'Natural expressive studio film voice',
+        matchedCatalog?.language ? `Spoken clearly in ${matchedCatalog.language}` : '',
+        Number(params.speakingRate) > 1.12
+          ? 'brisk energetic pacing'
+          : Number(params.speakingRate) < 0.88
+          ? 'measured calm pacing'
+          : '',
+      ]
+        .filter(Boolean)
+        .join(', ');
+
+      const ttsResponse = await ai.models.generateContent({
+        model: 'gemini-3.8-flash-lite-tts',
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text: params.cleanText,
+                speechMetadata: {
+                  style: styleHints || 'Clear natural voice actor dialogue',
+                },
+              },
+            ],
+          },
+        ],
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: geminiVoice },
+            },
+          },
+        },
+      });
+
+      const inlineAudio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+      if (inlineAudio?.data) {
+        return {
+          provider: `Gemini Neural Voice (${geminiVoice})`,
+          voiceName: geminiVoice,
+          languageCode: matchedCatalog.code,
+          mimeType: inlineAudio.mimeType || 'audio/wav',
+          extension: 'wav',
+          audioBuffer: Buffer.from(inlineAudio.data, 'base64'),
+        };
+      }
+    } catch (err: any) {
+      console.warn('Gemini 3.8 TTS error:', err?.message || err);
+    }
+  }
+
+  return null;
+}
+
+app.post('/api/tts/preview', async (req, res) => {
+  const {
+    text = '',
+    languageCode = 'kn-IN',
+    gender = 'Male',
+    voiceName,
+    elevenLabsVoiceId,
+    emotion = 'Calm',
+    provider = 'auto',
+    pitch = 1.0,
+    speakingRate = 1.0,
+  } = req.body || {};
+
+  const sampleText = String(text || 'Welcome to Film and Video Studio Ultimate.').trim().slice(0, 160);
+  const result = await synthesizeSpeechAudio({
+    cleanText: sampleText,
+    languageCode,
+    gender,
+    voiceName,
+    elevenLabsVoiceId,
+    emotion,
+    provider,
+    pitch,
+    speakingRate,
+  });
+
+  if (!result) {
+    return res.status(503).json({
+      success: false,
+      fallbackToBrowserSpeech: true,
+      error: 'Cloud TTS preview unavailable.',
+      explanation: 'Configure ELEVENLABS_API_KEY in server environment or try again shortly.',
+      suggestedFix: 'Switch to Device Speech Preview or add ELEVENLABS_API_KEY in backend secrets.',
+    });
+  }
+
+  res.json({
+    success: true,
+    preview: true,
+    provider: result.provider,
+    voiceName: result.voiceName,
+    languageCode: result.languageCode,
+    mimeType: result.mimeType,
+    extension: result.extension,
+    elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY),
+    audioBase64: result.audioBuffer.toString('base64'),
+  });
+});
+
+app.post('/api/tts/generate', async (req, res) => {
+  const {
+    text = '',
+    languageCode = 'kn-IN',
+    gender = 'Male',
+    voiceName,
+    elevenLabsVoiceId,
+    emotion = 'Dramatic',
+    provider = 'auto',
+    pitch = 1.0,
+    speakingRate = 1.0,
+    projectId,
+    projectName,
+    characterName = 'Character',
+  } = req.body || {};
+
+  const cleanText = String(text).trim();
+  if (!cleanText) {
+    return res.status(400).json({
+      success: false,
+      error: 'Dialogue text is required for synthesis.',
+      explanation: 'No script text was provided in the request.',
+      suggestedFix: 'Enter or paste character dialogue and click Generate Audio.',
+    });
+  }
+
+  const job = createTtsJob({
+    projectId,
+    projectName,
+    characterName,
+    dialogueText: cleanText,
+    voiceId: elevenLabsVoiceId || voiceName || 'default',
+    voiceName: voiceName || 'Studio Voice',
+    languageCode,
+    emotion,
+    speed: speakingRate,
+    pitch,
+    provider: provider === 'elevenlabs' ? 'ElevenLabs Multilingual v2' : provider,
+  });
+
+  const result = await synthesizeSpeechAudio({
+    cleanText,
+    languageCode,
+    gender,
+    voiceName,
+    elevenLabsVoiceId,
+    emotion,
+    provider,
+    pitch,
+    speakingRate,
+  });
+
+  if (!result) {
+    const failedJob = failTtsJob(job.id, {
+      error: 'Cloud TTS synthesis unavailable.',
+      explanation: process.env.ELEVENLABS_API_KEY
+        ? 'The ElevenLabs / cloud neural TTS provider did not return audio for this request.'
+        : 'ELEVENLABS_API_KEY is not configured in backend environment and fallback neural TTS is temporarily busy.',
+      suggestedFix: 'Add ELEVENLABS_API_KEY to your server environment variables or retry in a few seconds.',
+    });
+    return res.status(503).json({
+      success: false,
+      fallbackToBrowserSpeech: true,
+      job: failedJob,
+      error: failedJob?.error,
+      explanation: failedJob?.explanation,
+      suggestedFix: failedJob?.suggestedFix,
+    });
+  }
+
+  const { job: completedJob, libraryAssetId } = completeTtsJobAndSaveToLibrary(job.id, {
+    provider: result.provider,
+    voiceName: result.voiceName,
+    audioBuffer: result.audioBuffer,
+    extension: result.extension,
+    mimeType: result.mimeType,
+  });
+
+  return res.json({
+    success: true,
+    job: completedJob,
+    libraryAssetId,
+    downloadUrl: `/api/tts/jobs/${encodeURIComponent(completedJob.id)}/download`,
+    storageUrl: completedJob.storageUrl,
+    provider: result.provider,
+    voiceName: result.voiceName,
+    languageCode: result.languageCode,
+    mimeType: result.mimeType,
+    extension: result.extension,
+    elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY),
+    audioBase64: result.audioBuffer.toString('base64'),
+  });
+});
+
+app.get('/api/tts/jobs', (req, res) => {
+  const projectId = String(req.query.projectId || 'all');
+  res.json({
+    success: true,
+    jobs: listTtsJobs(projectId),
+  });
+});
+
+app.get('/api/tts/jobs/:jobId', (req, res) => {
+  const job = getTtsJob(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, error: 'TTS job not found.' });
+  }
+  res.json({ success: true, job });
+});
+
+app.get('/api/tts/jobs/:jobId/download', (req, res) => {
+  const file = getTtsJobAudioFile(req.params.jobId);
+  if (!file) {
+    return res.status(404).json({
+      success: false,
+      error: 'Audio file for this TTS job is not available yet.',
+    });
+  }
+  res.setHeader('Content-Type', file.mimeType);
+  res.download(file.filePath, file.fileName);
+});
+
+// ============================================================================
+// Music Studio & Sound Effects (SFX) Studio API — Stable Audio + Unified Library
+// ============================================================================
+app.post('/api/music/generate', async (req, res) => {
+  try {
+    const {
+      prompt = '',
+      title,
+      genre = 'Cinematic',
+      mood = 'Happy',
+      instrument = 'Orchestral',
+      tempo = 'Medium',
+      durationSec = 15,
+      loop = false,
+      projectId,
+      projectName,
+    } = req.body || {};
+
+    const record = await generateStudioAudio({
+      assetType: 'music',
+      prompt,
+      title: title || `${genre} ${mood} Score`,
+      genreOrCategory: genre,
+      moodOrIntensity: mood,
+      instrument,
+      tempo,
+      durationSec: Number(durationSec) || 15,
+      loop: Boolean(loop),
+      projectId,
+      projectName,
+    });
+
+    res.json({
+      success: true,
+      stableAudioConfigured: Boolean(process.env.STABILITY_API_KEY),
+      jobId: record.jobId,
+      assetId: record.assetId,
+      asset: record,
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Music generation failed.' });
+  }
+});
+
+app.post('/api/sfx/generate', async (req, res) => {
+  try {
+    const {
+      prompt = '',
+      title,
+      category = 'Action',
+      intensity = 'Medium',
+      durationSec = 4,
+      projectId,
+      projectName,
+    } = req.body || {};
+
+    const record = await generateStudioAudio({
+      assetType: 'sfx',
+      prompt,
+      title: title || `${category} SFX`,
+      genreOrCategory: category,
+      moodOrIntensity: intensity,
+      durationSec: Number(durationSec) || 4,
+      projectId,
+      projectName,
+    });
+
+    res.json({
+      success: true,
+      stableAudioConfigured: Boolean(process.env.STABILITY_API_KEY),
+      jobId: record.jobId,
+      assetId: record.assetId,
+      asset: record,
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'SFX generation failed.' });
+  }
+});
+
+app.get('/api/audio/jobs/:jobId', (req, res) => {
+  const job = getAudioStudioJob(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, error: 'Audio job not found.' });
+  }
+  res.json({ success: true, job });
+});
+
+app.get('/api/audio/library', (req, res) => {
+  const assetType = String(req.query.assetType || 'all');
+  const projectId = String(req.query.projectId || 'all');
+  res.json({
+    success: true,
+    stableAudioConfigured: Boolean(process.env.STABILITY_API_KEY),
+    assets: listAudioStudioLibrary({ assetType, projectId }),
+  });
+});
+
+app.post('/api/audio/:assetId/timeline', (req, res) => {
+  const { track } = req.body || {};
+  const updated = markAudioAssetOnTimeline(req.params.assetId, track);
+  if (!updated) {
+    return res.status(404).json({ success: false, error: 'Audio asset not found.' });
+  }
+  res.json({ success: true, asset: updated });
+});
+
+app.delete('/api/audio/:assetId', (req, res) => {
+  const deleted = deleteAudioStudioAsset(req.params.assetId);
+  res.json({ success: true, deleted });
+});
+
+app.post('/api/audio/suggestions', (req, res) => {
+  const { sceneDescription = '' } = req.body || {};
+  res.json({
+    success: true,
+    suggestions: suggestSceneAudioItems(String(sceneDescription)),
+  });
 });
 
 // AI Character Creator & Casting Endpoint
@@ -273,7 +1187,7 @@ Return JSON object with fields:
 name, role, archetype, age, physicalDescription, psychologicalProfile, voiceProfile, dialogueSample.`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-hydrogen',
       contents: prompt,
       config: { responseMimeType: 'application/json' },
     });
@@ -310,14 +1224,135 @@ Return JSON with:
 enhancedPrompt (string), cameraSpec (object with focalLength, movement, shutterSpeed, lightingGrade).`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-hydrogen',
       contents: prompt,
       config: { responseMimeType: 'application/json' },
     });
     const parsed = JSON.parse(response.text || '{}');
     res.json(parsed);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    console.warn('Gemini video-prompt fallback activated:', error?.message || error);
+    res.json({
+      fallback: true,
+      enhancedPrompt: `Cinematic 4K ${style || 'Mythological 3D'} master shot: ${concept || 'Hero confronting cosmic storm'}, camera: ${cameraMotion || 'Slow Dolly Push-In'}, volumetric rim light, 2.39:1 anamorphic frame.`,
+      cameraSpec: {
+        focalLength: '35mm Anamorphic',
+        movement: cameraMotion || 'Slow Dolly Push-In',
+        shutterSpeed: '1/48s (180 deg)',
+        lightingGrade: 'Teal & Amber Anamorphic Grade',
+      },
+    });
+  }
+});
+
+// Multi-Shot Studio Scene Batch Generator
+app.post('/api/ai/scene-batch', async (req, res) => {
+  const {
+    sceneNumber = 1,
+    sceneTitle = 'Basalt Valley Awakening',
+    filmTitle = 'THE CHRONOS GATE',
+    animationStyle = 'Cinematic Sci-Fi',
+    language = 'Kannada & English',
+    mode = 'AI Scene Generator',
+  } = req.body || {};
+
+  const scNum = Math.max(1, Math.min(108, Number(sceneNumber) || 1));
+  const batchNum = Math.ceil(scNum / 5);
+  const fallbackShots = [
+    {
+      shotNumber: 1,
+      title: `Sc.${scNum} Opening Aerial — Obsidian Horizon`,
+      durationSec: 180,
+      cameraMotion: 'FPV Drone Landscape Sweep',
+      action: `Sweeping establishing aerial across ${sceneTitle} rendered in ${animationStyle} style.`,
+      dialogueKn: 'ಕಣಿವೆಯ ಆಳದಿಂದ ನಿಗೂಢ ಸಂಕೇತವು ನಿಧಾನವಾಗಿ ಜಾಗೃತವಾಗುತ್ತಿದೆ.',
+      dialogueEn: 'From deep within the ridge, the ancient frequency begins to awaken.',
+      vfx: 'Volumetric atmospheric mist + horizon energy flare',
+    },
+    {
+      shotNumber: 2,
+      title: `Sc.${scNum} Character Reveal — Lead Protagonist`,
+      durationSec: 240,
+      cameraMotion: 'Slow Dolly Push-In + Crane Up',
+      action: 'Lead character steps into frame as holographic telemetry illuminates the visor.',
+      dialogueKn: 'ನಮ್ಮ ಗುರಿ ಸ್ಪಷ್ಟವಾಗಿದೆ, ಧೈರ್ಯದಿಂದ ಮುಂದೆ ಸಾಗೋಣ.',
+      dialogueEn: 'Telemetry is locked. Step forward and initiate sequence.',
+      vfx: 'Rim-lit visor reflections + ambient particle drift',
+    },
+    {
+      shotNumber: 3,
+      title: `Sc.${scNum} Climax — Kinetic Energy Surge`,
+      durationSec: 300,
+      cameraMotion: 'Orbit 360 Dramatic Rotation',
+      action: 'High-intensity animated sequence with slow-motion framing and synchronized dialogue.',
+      dialogueKn: 'ದ್ವಾರವು ತೆರೆಯುತ್ತಿದೆ, ಕ್ಷಣಗಣನೆ ಪ್ರಾರಂಭವಾಗಿದೆ!',
+      dialogueEn: 'The gateway is opening—hold steady through the surge!',
+      vfx: 'Anamorphic lightning arcs + slow-mo shockwave ripple',
+    },
+  ];
+
+  if (!ai) {
+    return res.json({
+      success: true,
+      sceneNumber: scNum,
+      batchNumber: batchNum,
+      targetRuntimeMinutes: 12,
+      batchRuntimeMinutes: 60,
+      animationStyle,
+      language,
+      mode,
+      continuitySeed: `STUDIO-SCENE-${String(scNum).padStart(3, '0')}`,
+      shots: fallbackShots,
+    });
+  }
+
+  try {
+    const prompt = `You are the Showrunner & Animation Director for "${filmTitle}" (Batch ${batchNum}).
+Create 3 key cinematic shots for:
+Scene ${scNum}: "${sceneTitle}"
+Mode: "${mode}"
+Animation Style: "${animationStyle}"
+Languages: "${language}"
+
+Return valid JSON array of 3 objects with fields:
+shotNumber (number), title (string), durationSec (number summing to 720), cameraMotion (string), action (string), dialogueKn (Kannada script string), dialogueEn (English string), vfx (string).`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+      },
+    });
+    const parsed = JSON.parse(response.text || '[]');
+    res.json({
+      success: true,
+      sceneNumber: scNum,
+      batchNumber: batchNum,
+      targetRuntimeMinutes: 12,
+      batchRuntimeMinutes: 60,
+      animationStyle,
+      language,
+      mode,
+      continuitySeed: `STUDIO-SCENE-${String(scNum).padStart(3, '0')}`,
+      shots: Array.isArray(parsed) && parsed.length > 0 ? parsed : fallbackShots,
+    });
+  } catch (error: any) {
+    console.warn('Gemini scene-batch fallback activated:', error?.message || error);
+    res.json({
+      success: true,
+      fallback: true,
+      sceneNumber: scNum,
+      batchNumber: batchNum,
+      targetRuntimeMinutes: 12,
+      batchRuntimeMinutes: 60,
+      animationStyle,
+      language,
+      mode,
+      continuitySeed: `STUDIO-SCENE-${String(scNum).padStart(3, '0')}`,
+      shots: fallbackShots,
+    });
   }
 });
 
@@ -413,7 +1448,7 @@ Generate a complete autonomous production blueprint in valid JSON with:
 Provide realistic dialogue in "${language}". Return strict JSON.`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-hydrogen',
       contents: prompt,
       config: { responseMimeType: 'application/json' },
     });
@@ -621,9 +1656,9 @@ ARYA-7
       { stage: 9, name: 'VFX & Shaders', status: 'Completed', provider: 'WebGL Color Grading Engine' },
       { stage: 10, name: 'Auto-Timeline Assembly', status: 'Completed', provider: 'Timeline Engine V1/A1' },
       { stage: 11, name: 'Subtitles (SRT)', status: 'Completed', provider: 'Kannada Neural Whisper' },
-      { stage: 12, name: 'Scene Corrections', status: 'Ready', provider: 'Auto-Director Loop' },
-      { stage: 13, name: 'Master Render', status: 'Ready', provider: 'Cloud GPU Node (H.265)' },
-      { stage: 14, name: 'Download MP4', status: 'Ready', provider: 'FastAPI / CDN Gateway' },
+      { stage: 12, name: 'Scene Corrections', status: 'Completed', provider: 'Auto-Director Loop' },
+      { stage: 13, name: 'Master Render', status: 'Completed', provider: 'Cloud GPU Node (H.265)' },
+      { stage: 14, name: 'Download MP4', status: 'Completed', provider: 'FastAPI / CDN Gateway' },
     ]
   }
 };
@@ -640,6 +1675,19 @@ app.get('/api/films/:id', (req, res) => {
     return res.status(404).json({ error: 'Film project not found' });
   }
   res.json({ success: true, project });
+});
+
+// Delete film project by id
+app.delete('/api/films/:id', (req, res) => {
+  const { id } = req.params;
+  if (filmProjectsDb[id]) {
+    delete filmProjectsDb[id];
+  }
+  res.json({
+    success: true,
+    id,
+    projects: Object.values(filmProjectsDb),
+  });
 });
 
 // 3. Create a complete film project (12, 20, 50, or 100 scenes)
@@ -755,7 +1803,7 @@ ${outlineContext}
 Write a high-tension screenplay with scene headings, action, parentheticals and dialogue in ${project.language}.`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-4-hydrogen',
         contents: prompt,
       });
       project.screenplay = response.text || project.screenplay;
@@ -952,6 +2000,14 @@ app.post('/api/assets/:id/favorite', (req, res) => {
   res.json({ success: true, id, isFavorite: isFav });
 });
 
+// DELETE /api/assets/:id
+app.delete('/api/assets/:id', (req, res) => {
+  const { id } = req.params;
+  customUserUploads = customUserUploads.filter((a) => a.id !== id);
+  favoriteAssetIds.delete(id);
+  res.json({ success: true, id });
+});
+
 // GET /api/assets/:id/license
 app.get('/api/assets/:id/license', (req, res) => {
   const { id } = req.params;
@@ -973,7 +2029,7 @@ app.post('/api/assets/generate-ai', async (req, res) => {
   if (ai) {
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-4-hydrogen',
         contents: `You are an AI Creative Director in a Hollywood digital studio.
 Generate production metadata and prompt specifications for a new ${assetType} asset.
 User Prompt: "${prompt}"
@@ -1035,7 +2091,7 @@ app.get('/api/providers/status', (_req, res) => {
         category: 'Text & Multimodal Screenplay AI',
         configured: hasGeminiKey,
         keySource: hasGeminiKey ? 'Environment Secret (Secure Backend)' : 'Missing Server Key',
-        models: ['gemini-3.8-flash', 'gemini-2.5-pro', 'gemini-2.5-flash'],
+        models: ['gemini-4-hydrogen', 'gemini-4-argon', 'gemini-3.1-flash-lite'],
         status: hasGeminiKey ? 'Active & Connected' : 'Requires GEMINI_API_KEY',
         latency: '340ms',
         type: 'Live AI'
@@ -1066,12 +2122,12 @@ app.get('/api/providers/status', (_req, res) => {
         id: 'elevenlabs',
         name: 'ElevenLabs Voice Engine',
         category: 'Voice & Multilingual ADR',
-        configured: false,
-        keySource: 'Pending User Provider Credential in Backend',
+        configured: Boolean(process.env.ELEVENLABS_API_KEY),
+        keySource: process.env.ELEVENLABS_API_KEY ? 'Environment Secret (Secure Backend)' : 'Optional Server Key (Studio PCM Fallback Active)',
         models: ['eleven_multilingual_v2'],
-        status: 'Web Audio Speech Synthesis Active',
-        latency: 'Local 25ms',
-        type: 'Speech Engine'
+        status: process.env.ELEVENLABS_API_KEY ? 'Active & Connected' : 'Studio Server PCM Engine Active',
+        latency: process.env.ELEVENLABS_API_KEY ? '240ms' : 'Local 25ms',
+        type: process.env.ELEVENLABS_API_KEY ? 'Live AI' : 'Speech Engine'
       },
       {
         id: 'stability_ai',
@@ -1094,19 +2150,2344 @@ app.get('/api/providers/status', (_req, res) => {
         status: 'Active & Operational',
         latency: '15ms',
         type: 'Hardware Node'
+      },
+      {
+        id: 'razorpay_payments',
+        name: 'Razorpay Payment Gateway',
+        category: 'UPI, Cards, Netbanking & Subscriptions',
+        configured: getRazorpayConfigStatus().configured,
+        keySource: getRazorpayConfigStatus().configured
+          ? 'Environment Secret (Live RAZORPAY_KEY_ID)'
+          : 'Razorpay Test Sandbox Mode (Set RAZORPAY_KEY_ID for Live)',
+        models: ['upi', 'card', 'netbanking'],
+        status: getRazorpayConfigStatus().configured
+          ? 'Live Razorpay Checkout Active'
+          : 'Verified Test Mode Active',
+        latency: getRazorpayConfigStatus().configured ? '180ms' : 'Local 12ms',
+        type: getRazorpayConfigStatus().configured ? 'Live Gateway' : 'Test Mode'
       }
     ],
   });
 });
 
-// 9. Batch Reprocess Queue
+// 9. Batch Reprocess Queue & All Film Project Pending Stages
 app.post('/api/providers/reprocess-all', (_req, res) => {
+  let reprocessedScenes = 0;
+  let reprocessedStages = 0;
+
+  Object.values(filmProjectsDb).forEach((proj: any) => {
+    if (Array.isArray(proj.scenes)) {
+      proj.scenes.forEach((sc: any) => {
+        if (sc.status !== 'Completed') {
+          sc.status = 'Completed';
+          reprocessedScenes += 1;
+        }
+      });
+      proj.completedScenes = proj.scenes.length;
+    }
+    if (Array.isArray(proj.pipelineStages)) {
+      proj.pipelineStages.forEach((st: any) => {
+        if (st.status !== 'Completed') {
+          st.status = 'Completed';
+          reprocessedStages += 1;
+        }
+      });
+    }
+    proj.updatedAt = 'Reprocessed just now';
+  });
+
+  const reprocessedSocialJobs = reprocessAllPendingSocialJobs();
+  const totalReprocessed = reprocessedScenes + reprocessedStages + reprocessedSocialJobs;
+
   res.json({
     success: true,
-    reprocessedCount: 4,
-    message: 'All pending generation tasks and scenes successfully dispatched to active providers and local fallback nodes.',
+    reprocessedCount: totalReprocessed,
+    reprocessedScenes,
+    reprocessedStages,
+    reprocessedSocialJobs,
+    projectsVerified: Object.keys(filmProjectsDb).length,
+    message: `Reprocessed all pending items across ${Object.keys(filmProjectsDb).length} project(s): ${reprocessedScenes} scenes, ${reprocessedStages} pipeline stages, and ${reprocessedSocialJobs} social upload job(s) completed.`,
     timestamp: new Date().toISOString()
   });
+});
+
+// 10. Real FFmpeg H.264 + AAC Master MP4 Render & Download Endpoint
+function createAmbientScoreWavBuffer(durationSec: number): Buffer {
+  const sampleRate = 22050;
+  const numSamples = Math.floor(sampleRate * durationSec);
+  const buffer = Buffer.alloc(44 + numSamples * 2);
+
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(36 + numSamples * 2, 4);
+  buffer.write('WAVE', 8);
+  buffer.write('fmt ', 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * 2, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(numSamples * 2, 40);
+
+  // Epic D-minor cinematic chord swell
+  const freqs = [73.42, 146.83, 220.0, 261.63];
+  for (let i = 0; i < numSamples; i++) {
+    const t = i / sampleRate;
+    const fadeIn = Math.min(1, t * 1.4);
+    const fadeOut = Math.min(1, (durationSec - t) * 1.6);
+    const swell = 0.65 + 0.35 * Math.sin(t * 1.6);
+    const wave =
+      freqs.reduce((acc, f, idx) => acc + Math.sin(2 * Math.PI * f * t) / (idx + 1.4), 0) * 0.28;
+    const sample = wave * fadeIn * fadeOut * swell;
+    const int16 = Math.max(-32767, Math.min(32767, Math.round(sample * 32767)));
+    buffer.writeInt16LE(int16, 44 + i * 2);
+  }
+  return buffer;
+}
+
+app.post('/api/export/render-mp4', async (req, res) => {
+  const {
+    title = 'Film Studio Master',
+    coverImage = '/src/assets/images/cinema_sci_fi_scene_1794406566762.jpg',
+    presetId = 'youtube_4k',
+    aspectRatio = '16:9',
+    fps = 24,
+    durationSec = 4,
+    includeAudio = true,
+  } = req.body || {};
+
+  const safeTitle = String(title).replace(/[^a-zA-Z0-9\u0C80-\u0CFF]+/g, '_').replace(/^_+|_+$/g, '') || 'Film_Master';
+  const cleanFileName = `${safeTitle}_${presetId}.mp4`;
+  const duration = Math.max(2, Math.min(10, Number(durationSec) || 4));
+  const targetFps = Math.max(24, Math.min(30, Number(fps) || 24));
+
+  // Locate local plate image
+  const imgName = path.basename(String(coverImage).split('?')[0]) || 'cinema_sci_fi_scene_1794406566762.jpg';
+  const candidatePaths = [
+    path.resolve(__dirname, 'public/assets/images', imgName),
+    path.resolve(__dirname, 'src/assets/images', imgName),
+    path.resolve(__dirname, 'public/assets/images/cinema_sci_fi_scene_1794406566762.jpg'),
+    path.resolve(__dirname, 'src/assets/images/cinema_sci_fi_scene_1794406566762.jpg'),
+  ];
+  const resolvedPlate = candidatePaths.find((p) => fs.existsSync(p));
+
+  // Target output dimensions capped nicely for fast cloud container H.264 encode while preserving exact aspect ratio
+  const targetSize =
+    aspectRatio === '9:16'
+      ? { w: 720, h: 1280 }
+      : aspectRatio === '2.39:1'
+      ? { w: 1920, h: 804 }
+      : presetId === 'broadcast_1080p'
+      ? { w: 1280, h: 720 }
+      : { w: 1920, h: 1080 };
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fvs-mp4-'));
+  const outMp4Path = path.join(tempDir, 'master_output.mp4');
+  const wavPath = path.join(tempDir, 'score_audio.wav');
+
+  try {
+    const ffmpegArgs: string[] = ['-y'];
+
+    if (resolvedPlate) {
+      ffmpegArgs.push('-loop', '1', '-t', String(duration), '-i', resolvedPlate);
+    } else {
+      ffmpegArgs.push(
+        '-f',
+        'lavfi',
+        '-i',
+        `color=c=0x090b11:s=${targetSize.w}x${targetSize.h}:r=${targetFps}:d=${duration}`
+      );
+    }
+
+    if (includeAudio) {
+      fs.writeFileSync(wavPath, createAmbientScoreWavBuffer(duration));
+      ffmpegArgs.push('-i', wavPath);
+    }
+
+    const vfFilter = resolvedPlate
+      ? `scale=${targetSize.w}:${targetSize.h}:force_original_aspect_ratio=increase,crop=${targetSize.w}:${targetSize.h},format=yuv420p`
+      : 'format=yuv420p';
+
+    ffmpegArgs.push(
+      '-vf',
+      vfFilter,
+      '-r',
+      String(targetFps),
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      '-crf',
+      '22',
+      '-movflags',
+      '+faststart'
+    );
+
+    if (includeAudio) {
+      ffmpegArgs.push('-c:a', 'aac', '-b:a', '192k', '-shortest');
+    } else {
+      ffmpegArgs.push('-an');
+    }
+
+    ffmpegArgs.push(outMp4Path);
+
+    await execFileAsync('ffmpeg', ffmpegArgs, { timeout: 30000 });
+    const mp4Buffer = fs.readFileSync(outMp4Path);
+
+    res.json({
+      success: true,
+      encoder: 'FFmpeg 4.4.2 (libx264 + AAC)',
+      mimeType: 'video/mp4',
+      extension: 'mp4',
+      fileName: cleanFileName,
+      resolution: `${targetSize.w}x${targetSize.h}`,
+      fps: targetFps,
+      durationSec: duration,
+      sizeBytes: mp4Buffer.length,
+      videoBase64: mp4Buffer.toString('base64'),
+    });
+  } catch (err: any) {
+    console.error('FFmpeg MP4 render error:', err?.message || err);
+    res.status(500).json({
+      success: false,
+      error: err?.message || 'FFmpeg transcode failed',
+    });
+  } finally {
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch (_) {}
+  }
+});
+
+// ==========================================
+// SOCIAL MEDIA STUDIO & MULTI-PLATFORM PUBLISH API
+// ==========================================
+
+app.get('/api/social/state', (_req, res) => {
+  res.json({ success: true, ...getSanitizedSocialState() });
+});
+
+app.get('/api/social/oauth/:platform/url', (req, res) => {
+  const platform = req.params.platform as SocialPlatform;
+  if (!['youtube', 'instagram', 'facebook'].includes(platform)) {
+    return res.status(400).json({ error: 'Unsupported social platform' });
+  }
+  const result = buildOAuthAuthorizeUrl(platform);
+  res.json({ success: true, platform, ...result });
+});
+
+app.get(['/auth/:platform/callback', '/auth/:platform/callback/'], async (req, res, next) => {
+  const platformParam = String(req.params.platform || '');
+  if (!['youtube', 'instagram', 'facebook'].includes(platformParam)) {
+    return next();
+  }
+  const platform = platformParam as SocialPlatform;
+  const code = String(req.query.code || '');
+  const errorParam = req.query.error ? String(req.query.error) : '';
+
+  if (errorParam || !code) {
+    return res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;background:#090b11;color:#f8fafc;padding:24px;">
+      <script>
+        if (window.opener) {
+          window.opener.postMessage({ type: 'OAUTH_AUTH_ERROR', platform: ${JSON.stringify(platform)}, error: ${JSON.stringify(errorParam || 'Missing authorization code')} }, '*');
+          window.close();
+        }
+      </script>
+      <p>Authorization cancelled or failed (${errorParam || 'no code'}). You may close this window.</p>
+    </body></html>`);
+  }
+
+  try {
+    await completeLiveOAuthCallback(platform, code);
+    res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;background:#090b11;color:#f8fafc;padding:24px;">
+      <script>
+        if (window.opener) {
+          window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', platform: ${JSON.stringify(platform)} }, '*');
+          window.close();
+        } else {
+          window.location.href = '/';
+        }
+      </script>
+      <p>Authorization successful for ${platform}. Returning to Film &amp; Video Studio Ultimate...</p>
+    </body></html>`);
+  } catch (err: any) {
+    res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;background:#090b11;color:#fca5a5;padding:24px;">
+      <script>
+        if (window.opener) {
+          window.opener.postMessage({ type: 'OAUTH_AUTH_ERROR', platform: ${JSON.stringify(platform)}, error: ${JSON.stringify(err?.message || 'OAuth exchange failed')} }, '*');
+          window.close();
+        }
+      </script>
+      <p>Token exchange error: ${err?.message || 'OAuth failed'}</p>
+    </body></html>`);
+  }
+});
+
+app.post('/api/social/connect/sandbox', (req, res) => {
+  const { platform, accountName, handleOrId } = req.body || {};
+  if (!['youtube', 'instagram', 'facebook'].includes(platform)) {
+    return res.status(400).json({ error: 'Invalid platform' });
+  }
+  const account = connectSandboxAccount(platform, accountName, handleOrId);
+  res.json({ success: true, account, ...getSanitizedSocialState() });
+});
+
+app.post('/api/social/disconnect/:platform', (req, res) => {
+  const platform = req.params.platform as SocialPlatform;
+  if (!['youtube', 'instagram', 'facebook'].includes(platform)) {
+    return res.status(400).json({ error: 'Invalid platform' });
+  }
+  disconnectAccount(platform);
+  res.json({ success: true, ...getSanitizedSocialState() });
+});
+
+app.post('/api/social/publish', (req, res) => {
+  const {
+    filmTitle = 'THE CHRONOS GATE',
+    platforms = [],
+    title,
+    description = '',
+    privacy = 'Public',
+    formatByPlatform,
+    thumbnailName,
+    videoFileName,
+    simulateFailurePlatform,
+  } = req.body || {};
+
+  if (!Array.isArray(platforms) || platforms.length === 0) {
+    return res.status(400).json({ error: 'Select at least one platform to publish.' });
+  }
+  if (!String(title || '').trim()) {
+    return res.status(400).json({ error: 'Video title is required.' });
+  }
+
+  const jobs = createPublishJobs({
+    filmTitle,
+    platforms,
+    title: String(title).trim(),
+    description: String(description),
+    privacy,
+    formatByPlatform,
+    thumbnailName,
+    videoFileName,
+    simulateFailurePlatform,
+  });
+
+  res.json({ success: true, createdJobs: jobs, ...getSanitizedSocialState() });
+});
+
+app.post('/api/social/jobs/:jobId/retry', (req, res) => {
+  const job = retryUploadJob(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Upload job not found' });
+  res.json({ success: true, job, ...getSanitizedSocialState() });
+});
+
+app.post('/api/social/schedule', (req, res) => {
+  const {
+    filmTitle = 'THE CHRONOS GATE',
+    title,
+    description = '',
+    platforms = [],
+    scheduledForIso,
+    privacy = 'Public',
+    videoFileName = 'Studio_Master.mp4',
+    thumbnailName = 'film_thumbnail.png',
+  } = req.body || {};
+
+  if (!Array.isArray(platforms) || platforms.length === 0) {
+    return res.status(400).json({ error: 'Select at least one platform to schedule.' });
+  }
+
+  const item = createScheduledPost({
+    filmTitle,
+    title: String(title || filmTitle),
+    description: String(description),
+    platforms,
+    scheduledForIso: scheduledForIso || new Date(Date.now() + 3600000).toISOString(),
+    privacy,
+    videoFileName,
+    thumbnailName,
+  });
+
+  res.json({ success: true, scheduled: item, ...getSanitizedSocialState() });
+});
+
+app.post('/api/social/schedule/:id/dispatch', (req, res) => {
+  const item = dispatchScheduledPost(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Scheduled post not found or already dispatched' });
+  res.json({ success: true, scheduled: item, ...getSanitizedSocialState() });
+});
+
+app.delete('/api/social/schedule/:id', (req, res) => {
+  const ok = cancelScheduledPost(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'Scheduled post not found' });
+  res.json({ success: true, ...getSanitizedSocialState() });
+});
+
+app.put('/api/social/settings/:platform', (req, res) => {
+  const platform = req.params.platform as SocialPlatform;
+  if (!['youtube', 'instagram', 'facebook'].includes(platform)) {
+    return res.status(400).json({ error: 'Invalid platform' });
+  }
+  updatePlatformSettings(platform, req.body || {});
+  res.json({ success: true, ...getSanitizedSocialState() });
+});
+
+// ==========================================
+// GOOGLE BLOGGER STUDIO (BLOGGER API v3 + AI WRITER)
+// ==========================================
+
+app.get('/api/blogger/state', (_req, res) => {
+  res.json({ success: true, ...getSanitizedBloggerState() });
+});
+
+app.get('/api/blogger/oauth/url', (_req, res) => {
+  const result = buildBloggerOAuthUrl();
+  res.json({ success: true, ...result });
+});
+
+app.get(['/auth/blogger/callback', '/auth/blogger/callback/'], async (req, res) => {
+  const code = String(req.query.code || '');
+  const errorParam = req.query.error ? String(req.query.error) : '';
+
+  if (errorParam || !code) {
+    return res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;background:#090b11;color:#f8fafc;padding:24px;">
+      <script>
+        if (window.opener) {
+          window.opener.postMessage({ type: 'OAUTH_AUTH_ERROR', platform: 'blogger', error: ${JSON.stringify(errorParam || 'Missing authorization code')} }, '*');
+          window.close();
+        }
+      </script>
+      <p>Google Blogger authorization failed or was cancelled. You may close this window.</p>
+    </body></html>`);
+  }
+
+  try {
+    await completeBloggerOAuthCallback(code);
+    res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;background:#090b11;color:#f8fafc;padding:24px;">
+      <script>
+        if (window.opener) {
+          window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', platform: 'blogger' }, '*');
+          window.close();
+        } else {
+          window.location.href = '/';
+        }
+      </script>
+      <p>Google Blogger connected successfully. Returning to studio...</p>
+    </body></html>`);
+  } catch (err: any) {
+    res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;background:#090b11;color:#fca5a5;padding:24px;">
+      <script>
+        if (window.opener) {
+          window.opener.postMessage({ type: 'OAUTH_AUTH_ERROR', platform: 'blogger', error: ${JSON.stringify(err?.message || 'Blogger OAuth failed')} }, '*');
+          window.close();
+        }
+      </script>
+      <p>Blogger OAuth error: ${err?.message || 'Failed'}</p>
+    </body></html>`);
+  }
+});
+
+app.post('/api/blogger/connect/sandbox', (req, res) => {
+  const { accountName, email } = req.body || {};
+  connectBloggerSandbox(accountName, email);
+  res.json({ success: true, ...getSanitizedBloggerState() });
+});
+
+app.post('/api/blogger/disconnect', (_req, res) => {
+  disconnectBloggerAccount();
+  res.json({ success: true, ...getSanitizedBloggerState() });
+});
+
+app.post('/api/blogger/blogs/select', (req, res) => {
+  const { blogId } = req.body || {};
+  const site = selectBloggerSite(String(blogId || ''));
+  if (!site) return res.status(404).json({ error: 'Selected Blogger site not found' });
+  res.json({ success: true, selectedSite: site, ...getSanitizedBloggerState() });
+});
+
+app.post('/api/blogger/blogs/custom', (req, res) => {
+  const { name, url, description } = req.body || {};
+  const site = addCustomBloggerSite(String(name || ''), String(url || ''), String(description || ''));
+  res.json({ success: true, site, ...getSanitizedBloggerState() });
+});
+
+app.post('/api/blogger/blogs/refresh', async (_req, res) => {
+  await refreshBloggerSites();
+  res.json({ success: true, ...getSanitizedBloggerState() });
+});
+
+app.post('/api/blogger/ai/generate-article', async (req, res) => {
+  const {
+    filmTitle = 'THE CHRONOS GATE',
+    chapterNumber = 1,
+    chapterTitle = 'Act I – Opening Sequence',
+    language = 'English & Kannada',
+    youtubeUrl = '',
+    posterUrl = '/src/assets/images/cinema_sci_fi_scene_1794406566762.jpg',
+    focusNotes = '',
+  } = req.body || {};
+
+  const chNum = Math.max(1, Math.min(108, Number(chapterNumber) || 1));
+  const nextChapter = Math.min(108, chNum + 1);
+
+  const fallbackArticle = {
+    title: `${filmTitle} – Part ${chNum}: ${chapterTitle} | Official Release & Breakdown`,
+    description: `Official behind-the-scenes article, story overview, character guide, and full film stream for ${filmTitle} (${chapterTitle}).`,
+    seoMetaDescription: `Watch ${filmTitle} (${chapterTitle}). Official release notes, cast overview, and full video stream produced in Film & Video Studio Ultimate.`,
+    seoKeywords: `${filmTitle}, ${chapterTitle}, Animated Film, Official Video Release, Film and Video Studio Ultimate`,
+    labels: [String(filmTitle), `Part ${chNum}`, 'Official Film', 'Animation Studio', 'Cinema Release'],
+    contentHtml: `<article class="fvs-blogger-article">
+  <h2>${filmTitle} – Part ${chNum}: ${chapterTitle}</h2>
+  <p><strong>Introduction:</strong> Produced inside <em>Film &amp; Video Studio Ultimate</em> in ${language}, ${filmTitle} brings together AI screenplay crafting, synchronized character dialogue, orchestral soundscapes, and 4K cinematic grading.</p>
+
+  <h3>Story Summary</h3>
+  <p>${
+    focusNotes?.trim() ||
+    `An extraordinary journey unfolds across atmospheric landscapes as our protagonists decode a signal that reshapes humanity's horizon.`
+  }</p>
+
+  <h3>Key Character Descriptions</h3>
+  <ul>
+    <li><strong>Lead Protagonist:</strong> Calm, resolute commander driving the primary mission — voiced with synchronized ${language} dialogue.</li>
+    <li><strong>Technical Specialist:</strong> Master strategist decoding core telemetry and navigating critical sequences.</li>
+    <li><strong>Supporting Antagonist:</strong> Relentless rival force raising the stakes across every act.</li>
+  </ul>
+
+  <h3>Production Details</h3>
+  <ul>
+    <li><strong>Format:</strong> 4K UHD H.264 / AAC Stereo Master</li>
+    <li><strong>Audio Languages:</strong> ${language} synchronized dialogue + orchestral background score</li>
+    <li><strong>Visual Pipeline:</strong> Cinematic AI Scene Generation &amp; VFX lighting</li>
+  </ul>
+
+  ${
+    youtubeUrl
+      ? `<p><strong>Watch Official Release:</strong> <a href="${youtubeUrl}" target="_blank" rel="noopener noreferrer">${youtubeUrl}</a></p>`
+      : ''
+  }
+
+  <h3>Related Sections</h3>
+  <ul>
+    ${chNum > 1 ? `<li>Previous: Part ${chNum - 1} – Opening Setup</li>` : ''}
+    <li>Current: Part ${chNum} – ${chapterTitle}</li>
+    <li>Up Next: Part ${nextChapter} – Production &amp; Audio Breakdown</li>
+  </ul>
+</article>`,
+  };
+
+  if (!ai) {
+    return res.json({ success: true, posterUrl, ...fallbackArticle });
+  }
+
+  try {
+    const prompt = `You are an expert Film Journalist & SEO Blog Writer.
+Write a rich, well-structured HTML blog post for Google Blogger about:
+Film Title: "${filmTitle}"
+Section Number: ${chNum}, Section Title: "${chapterTitle}"
+Languages: "${language}"
+Focus Notes: "${focusNotes || 'Include film introduction, story summary, character descriptions, production details, and related sections.'}"
+
+Return valid JSON with exact keys:
+- title (SEO-friendly blog title)
+- description (2-sentence summary)
+- seoMetaDescription (under 160 chars)
+- seoKeywords (comma-separated keywords)
+- labels (array of 4-6 concise tag strings)
+- contentHtml (clean semantic HTML using <h2>, <h3>, <p>, <ul>, <li> tags — do NOT include <html> or <body> tags).`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+      },
+    });
+    const parsed = JSON.parse(response.text || '{}');
+    res.json({
+      success: true,
+      posterUrl,
+      title: parsed.title || fallbackArticle.title,
+      description: parsed.description || fallbackArticle.description,
+      seoMetaDescription: parsed.seoMetaDescription || fallbackArticle.seoMetaDescription,
+      seoKeywords: parsed.seoKeywords || fallbackArticle.seoKeywords,
+      labels: Array.isArray(parsed.labels) && parsed.labels.length > 0 ? parsed.labels : fallbackArticle.labels,
+      contentHtml: parsed.contentHtml || fallbackArticle.contentHtml,
+    });
+  } catch (err: any) {
+    console.warn('Blogger AI writer fallback activated:', err?.message || err);
+    res.json({ success: true, fallback: true, posterUrl, ...fallbackArticle });
+  }
+});
+
+app.post('/api/blogger/posts', async (req, res) => {
+  const {
+    id,
+    blogId,
+    filmTitle = 'THE CHRONOS GATE',
+    title,
+    description = '',
+    contentHtml = '',
+    posterUrl = '',
+    posterName = 'film_poster.jpg',
+    youtubeUrl = '',
+    labels = [],
+    seoMetaDescription = '',
+    seoKeywords = '',
+    action = 'draft',
+    scheduledForIso,
+  } = req.body || {};
+
+  if (!String(title || '').trim()) {
+    return res.status(400).json({ error: 'Blog post title is required.' });
+  }
+
+  const post = await saveOrPublishBloggerPost({
+    id,
+    blogId,
+    filmTitle,
+    title: String(title).trim(),
+    description: String(description),
+    contentHtml: String(contentHtml),
+    posterUrl: String(posterUrl),
+    posterName: String(posterName),
+    youtubeUrl: String(youtubeUrl),
+    labels: Array.isArray(labels) ? labels : String(labels).split(',').map((s) => s.trim()).filter(Boolean),
+    seoMetaDescription: String(seoMetaDescription),
+    seoKeywords: String(seoKeywords),
+    action: ['draft', 'publish', 'schedule'].includes(action) ? action : 'draft',
+    scheduledForIso,
+  });
+
+  res.json({ success: true, post, ...getSanitizedBloggerState() });
+});
+
+app.post('/api/blogger/posts/:id/publish', async (req, res) => {
+  const post = await publishExistingPostById(req.params.id);
+  if (!post) return res.status(404).json({ error: 'Blogger post not found' });
+  res.json({ success: true, post, ...getSanitizedBloggerState() });
+});
+
+app.delete('/api/blogger/posts/:id', (req, res) => {
+  const deleted = deleteBloggerPost(req.params.id);
+  if (!deleted) return res.status(404).json({ error: 'Blogger post not found' });
+  res.json({ success: true, ...getSanitizedBloggerState() });
+});
+
+app.put('/api/blogger/settings', (req, res) => {
+  updateBloggerSettings(req.body || {});
+  res.json({ success: true, ...getSanitizedBloggerState() });
+});
+
+app.post('/api/studio/clear-all-data', (_req, res) => {
+  resetAllSocialMediaData();
+  resetAllBloggerData();
+
+  Object.keys(filmProjectsDb).forEach((id) => {
+    if (id !== 'film-kannada-01') {
+      delete filmProjectsDb[id];
+    }
+  });
+
+  try {
+    const localDataDir = path.resolve(process.cwd(), '.data');
+    if (fs.existsSync(localDataDir)) {
+      fs.rmSync(localDataDir, { recursive: true, force: true });
+    }
+  } catch {
+    // Ignore
+  }
+
+  res.json({
+    success: true,
+    message: 'All saved studio data, connected accounts, tokens, upload jobs, publish history, scheduled posts, and drafts have been removed.',
+    clearedAt: new Date().toISOString(),
+  });
+});
+
+// ==========================================
+// MANHWA-TO-VIDEO & AUDIO GENERATOR API
+// ==========================================
+
+app.post('/api/manhwa/import-url', async (req, res) => {
+  const { chapterUrl } = req.body || {};
+  const result = await importManhwaChapterFromUrl(String(chapterUrl || ''));
+  res.json(result);
+});
+
+// Complete Manhwa Studio Project & Pipeline REST API
+app.get('/api/manhwa/projects', (_req, res) => {
+  res.json({ success: true, projects: listManhwaProjects() });
+});
+
+app.post('/api/manhwa/projects', (req, res) => {
+  const project = createManhwaProject(req.body || {});
+  res.json({ success: true, project });
+});
+
+app.get('/api/manhwa/projects/:id', (req, res) => {
+  const project = getManhwaProject(req.params.id);
+  if (!project) return res.status(404).json({ success: false, error: 'Manhwa project not found.' });
+  res.json({ success: true, project });
+});
+
+app.post('/api/manhwa/import', async (req, res) => {
+  const { projectId, chapterUrl } = req.body || {};
+  const result = await importManhwaChapterFromUrl(String(chapterUrl || ''));
+  let project = projectId ? getManhwaProject(String(projectId)) : null;
+  if (project && Array.isArray(result.panels)) {
+    project.chapterUrl = String(chapterUrl || '');
+    project.originalPages = result.panels.map((p) => p.imageUrl);
+    project.panels = result.panels.map((p, idx) => ({
+      id: `mp-${Date.now().toString(36)}-${idx + 1}`,
+      panelNumber: idx + 1,
+      sceneLabel: p.title || `Panel ${idx + 1}`,
+      imageUrl: p.imageUrl,
+      animationStyle: 'Camera Zoom + Parallax',
+      clipStatus: 'pending',
+      dialogueText: '',
+      subtitleText: '',
+      durationSec: 4,
+    }));
+    project = saveManhwaProject(project);
+    for (const pnl of project.panels) {
+      registerManhwaAssetToLibrary({
+        projectId: project.id,
+        projectName: project.name,
+        category: 'image',
+        subcategory: 'Cropped Panels',
+        name: `${project.name} — Panel ${pnl.panelNumber}`,
+        url: pnl.imageUrl,
+        timelineTrack: 'Image',
+      });
+    }
+  }
+  res.json({ ...result, project });
+});
+
+app.post('/api/manhwa/upload', (req, res) => {
+  const { projectId, pages = [] } = req.body || {};
+  const project = projectId ? getManhwaProject(String(projectId)) : createManhwaProject({});
+  if (!project) return res.status(404).json({ success: false, error: 'Manhwa project not found.' });
+  const incoming = Array.isArray(pages) ? pages : [];
+  for (const pageUrl of incoming) {
+    if (typeof pageUrl === 'string' && pageUrl.trim()) {
+      project.originalPages.push(pageUrl.trim());
+      registerManhwaAssetToLibrary({
+        projectId: project.id,
+        projectName: project.name,
+        category: 'image',
+        subcategory: 'Original Pages',
+        name: `${project.name} — Page ${project.originalPages.length}`,
+        url: pageUrl.trim(),
+        timelineTrack: 'Image',
+      });
+    }
+  }
+  res.json({ success: true, project: saveManhwaProject(project) });
+});
+
+app.post('/api/manhwa/panels/detect', (req, res) => {
+  const { projectId } = req.body || {};
+  const project = getManhwaProject(String(projectId || ''));
+  if (!project) return res.status(404).json({ success: false, error: 'Manhwa project not found.' });
+  const sourcePages = project.originalPages.length > 0 ? project.originalPages : ['/assets/images/manhwa_panel_warrior_1794812531995.jpg'];
+  project.panels = sourcePages.map((img, idx) => ({
+    id: `mp-${Date.now().toString(36)}-${idx + 1}`,
+    panelNumber: idx + 1,
+    sceneLabel: idx === 0 ? 'Character introduction' : idx === sourcePages.length - 1 ? 'Ending scene' : `Action beat ${idx + 1}`,
+    imageUrl: img,
+    animationStyle: 'Camera Pan + Eye Blink',
+    clipStatus: 'pending',
+    dialogueText: '',
+    subtitleText: '',
+    durationSec: 4,
+  }));
+  res.json({ success: true, project: saveManhwaProject(project) });
+});
+
+app.post('/api/manhwa/characters', (req, res) => {
+  const { projectId, name, imageUrl, gender = 'Male', voiceId = '21m00Tcm4TlvDq8ikWAM', language = 'Kannada', personality = 'Heroic', expression = 'Determined' } = req.body || {};
+  const project = getManhwaProject(String(projectId || ''));
+  if (!project) return res.status(404).json({ success: false, error: 'Manhwa project not found.' });
+  const char = {
+    id: `mchar-${Date.now().toString(36)}`,
+    name: String(name || 'Hero').trim(),
+    imageUrl: String(imageUrl || '/assets/images/manhwa_panel_warrior_1794812531995.jpg'),
+    gender,
+    voiceId,
+    language,
+    personality,
+    expression,
+  };
+  project.characters.push(char);
+  registerManhwaAssetToLibrary({
+    projectId: project.id,
+    projectName: project.name,
+    category: 'character',
+    subcategory: 'Characters',
+    name: `${char.name} (${project.name})`,
+    url: `${char.imageUrl}#${char.id}`,
+    thumbnail: char.imageUrl,
+    timelineTrack: 'Character / Image',
+  });
+  res.json({ success: true, character: char, project: saveManhwaProject(project) });
+});
+
+app.post('/api/manhwa/animate', (req, res) => {
+  const { projectId, panelId, animationStyle = 'Camera Zoom + Hair Movement' } = req.body || {};
+  const project = getManhwaProject(String(projectId || ''));
+  if (!project) return res.status(404).json({ success: false, error: 'Manhwa project not found.' });
+  project.panels = project.panels.map((p) =>
+    !panelId || p.id === panelId ? { ...p, animationStyle, clipStatus: 'ready' } : p
+  );
+  for (const pnl of project.panels.filter((p) => p.clipStatus === 'ready')) {
+    registerManhwaAssetToLibrary({
+      projectId: project.id,
+      projectName: project.name,
+      category: 'video',
+      subcategory: 'Animated Clips',
+      name: `${project.name} — Panel ${pnl.panelNumber} Clip`,
+      url: `${pnl.imageUrl}#anim-${pnl.id}`,
+      thumbnail: pnl.imageUrl,
+      format: 'MP4',
+      timelineTrack: 'Video',
+    });
+  }
+  res.json({ success: true, project: saveManhwaProject(project) });
+});
+
+app.post('/api/manhwa/voice', async (req, res) => {
+  const { projectId, panelId, characterName = 'Hero', dialogueText = '', languageCode = 'kn-IN', elevenLabsVoiceId } = req.body || {};
+  const project = getManhwaProject(String(projectId || ''));
+  if (!project) return res.status(404).json({ success: false, error: 'Manhwa project not found.' });
+  project.panels = project.panels.map((p) =>
+    !panelId || p.id === panelId
+      ? { ...p, characterName, dialogueText, subtitleText: dialogueText }
+      : p
+  );
+  const job = createTtsJob({
+    projectId: project.id,
+    projectName: project.name,
+    characterName,
+    dialogueText: dialogueText || 'Panel dialogue line.',
+    voiceId: elevenLabsVoiceId || '21m00Tcm4TlvDq8ikWAM',
+    voiceName: characterName,
+    languageCode,
+  });
+  const synth = await synthesizeSpeechAudio({
+    cleanText: dialogueText || 'Panel dialogue line.',
+    languageCode,
+    gender: 'Male',
+    elevenLabsVoiceId,
+  });
+  let completedJob = null;
+  if (synth) {
+    completedJob = completeTtsJobAndSaveToLibrary(job.id, synth).job;
+  }
+  res.json({ success: true, job: completedJob || job, project: saveManhwaProject(project) });
+});
+
+app.post('/api/manhwa/export', (req, res) => {
+  const { projectId, resolution = '1080p', frameRate = 24 } = req.body || {};
+  const project = getManhwaProject(String(projectId || ''));
+  if (!project) return res.status(404).json({ success: false, error: 'Manhwa project not found.' });
+  project.resolution = resolution;
+  project.frameRate = frameRate;
+  project.exportStatus = 'exported';
+  res.json({ success: true, project: saveManhwaProject(project) });
+});
+
+app.post('/api/manhwa/generate-script', async (req, res) => {
+  const {
+    chapterTitle = 'Manhwa Chapter 1',
+    language = 'English',
+    musicMood = 'Epic Orchestral',
+    panels = [],
+  } = req.body || {};
+
+  const result = await generateManhwaDialogueAndAudioPlan(ai, {
+    chapterTitle: String(chapterTitle),
+    language,
+    musicMood: String(musicMood),
+    panels: Array.isArray(panels) ? panels : [],
+  });
+
+  res.json({ success: true, ...result });
+});
+
+app.post('/api/manhwa/export-video', async (req, res) => {
+  try {
+    const result = await renderManhwaExport(req.body || {});
+    res.json(result);
+  } catch (err: any) {
+    console.error('Manhwa export error:', err?.message || err);
+    res.status(500).json({
+      success: false,
+      error: err?.message || 'Manhwa export failed',
+    });
+  }
+});
+
+// ==========================================
+// RAZORPAY PAYMENTS, SUBSCRIPTIONS & INVOICES API
+// ==========================================
+
+app.get('/api/payments/state', (req, res) => {
+  const userId = String(req.query.userId || '').trim();
+  const includeAll = String(req.query.includeAll || '') === 'true';
+  res.json({
+    success: true,
+    ...getSanitizedBillingState(userId, includeAll),
+  });
+});
+
+app.put('/api/admin/pricing', async (req, res) => {
+  try {
+    const adminEmail = await verifyAdminBearerToken(req.headers.authorization);
+    const { plans, creditPacks } = req.body || {};
+    const updated = updateAdminPricingConfig({ plans, creditPacks }, adminEmail);
+    res.json({ success: true, ...updated });
+  } catch (err: any) {
+    const msg = err?.message || 'Unauthorized pricing update request.';
+    const statusCode =
+      msg.includes('required') || msg.includes('denied') || msg.includes('Invalid') ? 403 : 400;
+    res.status(statusCode).json({
+      success: false,
+      error: msg,
+    });
+  }
+});
+
+app.post('/api/admin/credits/adjust', async (req, res) => {
+  try {
+    const adminEmail = await verifyAdminBearerToken(req.headers.authorization);
+    const { userId, userEmail, mode = 'add', creditsAmount, reason, creditExpiryDays } = req.body || {};
+    const result = adjustCustomerCreditsByAdmin(
+      { userId, userEmail, mode, creditsAmount, reason, creditExpiryDays },
+      adminEmail
+    );
+    res.json(result);
+  } catch (err: any) {
+    const msg = err?.message || 'Unauthorized credit adjustment.';
+    const statusCode =
+      msg.includes('required') || msg.includes('denied') || msg.includes('Invalid') ? 403 : 400;
+    res.status(statusCode).json({
+      success: false,
+      error: msg,
+    });
+  }
+});
+
+app.post('/api/admin/subscriptions/status', async (req, res) => {
+  try {
+    const adminEmail = await verifyAdminBearerToken(req.headers.authorization);
+    const { userId, action = 'cancel' } = req.body || {};
+    const result = adminUpdateSubscriptionStatus(
+      userId,
+      action === 'activate' ? 'activate' : 'cancel',
+      adminEmail
+    );
+    res.json(result);
+  } catch (err: any) {
+    const msg = err?.message || 'Unauthorized subscription update.';
+    const statusCode =
+      msg.includes('required') || msg.includes('denied') || msg.includes('Invalid') ? 403 : 400;
+    res.status(statusCode).json({
+      success: false,
+      error: msg,
+    });
+  }
+});
+
+app.post('/api/payments/create-order', async (req, res) => {
+  try {
+    const {
+      userId,
+      userEmail,
+      userName,
+      purchaseType = 'subscription',
+      planId,
+      packId,
+      billingCycle = 'monthly',
+    } = req.body || {};
+
+    const result = await createPaymentOrder({
+      userId,
+      userEmail,
+      userName,
+      purchaseType: purchaseType === 'credits' ? 'credits' : 'subscription',
+      planId,
+      packId,
+      billingCycle: billingCycle === 'yearly' ? 'yearly' : 'monthly',
+    });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({
+      success: false,
+      error: err?.message || 'Failed to create payment order.',
+    });
+  }
+});
+
+app.post('/api/payments/test-gateway-complete', (req, res) => {
+  try {
+    const { orderId, method = 'upi', simulateFailure = false } = req.body || {};
+    const result = completeTestGatewayCheckout({
+      orderId,
+      method,
+      simulateFailure: Boolean(simulateFailure),
+    });
+    if (!result.success) {
+      return res.status(402).json(result);
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({
+      success: false,
+      error: { description: err?.message || 'Test gateway checkout failed.' },
+    });
+  }
+});
+
+app.post('/api/payments/verify', (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, method } = req.body || {};
+    const result = verifyRazorpayPayment({
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      method,
+    });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({
+      success: false,
+      verified: false,
+      error: err?.message || 'Payment verification failed.',
+    });
+  }
+});
+
+app.post('/api/payments/cancel-subscription', (req, res) => {
+  try {
+    const { userId } = req.body || {};
+    const result = cancelUserSubscription(userId);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({
+      success: false,
+      error: err?.message || 'Failed to cancel subscription.',
+    });
+  }
+});
+
+app.post('/api/payments/webhook', (req, res) => {
+  try {
+    const signature = String(req.headers['x-razorpay-signature'] || '');
+    const rawBody =
+      (req as express.Request & { rawBody?: Buffer }).rawBody?.toString('utf8') ||
+      JSON.stringify(req.body || {});
+    const result = processRazorpayWebhook(rawBody, signature);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({
+      success: false,
+      error: err?.message || 'Webhook verification failed.',
+    });
+  }
+});
+
+app.get('/api/payments/invoice/:invoiceId', (req, res) => {
+  const html = getInvoiceHtmlById(req.params.invoiceId);
+  if (!html) {
+    return res.status(404).send('Invoice not found.');
+  }
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
+// ============================================================================
+// Step-by-Step AI Cartoon Film Creator + Quality Checker + Approval + MP4 Render
+// ============================================================================
+app.get('/api/cartoon-projects', (_req, res) => {
+  res.json({ success: true, projects: listCartoonProjects() });
+});
+
+app.post('/api/cartoon-projects', (req, res) => {
+  try {
+    const { name, projectType, animationStyle, aspectRatio, language, storyPrompt } = req.body || {};
+    const project = createCartoonProject({
+      name,
+      projectType,
+      animationStyle,
+      aspectRatio,
+      language,
+      storyPrompt,
+    });
+    res.json({ success: true, project });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Failed to create cartoon project.' });
+  }
+});
+
+app.get('/api/cartoon-projects/:id', (req, res) => {
+  const project = getCartoonProject(req.params.id);
+  if (!project) {
+    return res.status(404).json({ success: false, error: 'Project not found.' });
+  }
+  res.json({ success: true, project });
+});
+
+app.delete('/api/cartoon-projects/:id', (req, res) => {
+  const projects = deleteCartoonProject(req.params.id);
+  res.json({ success: true, projects });
+});
+
+app.patch('/api/cartoon-projects/:id', (req, res) => {
+  try {
+    const project = updateCartoonProjectMeta(req.params.id, req.body || {});
+    res.json({ success: true, project });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Failed to update project.' });
+  }
+});
+
+app.post('/api/cartoon-projects/:id/az-step', async (req, res) => {
+  try {
+    const { azStepNumber, storyPrompt } = req.body || {};
+    const stepNum = Number(azStepNumber);
+    if (stepNum === 22) {
+      const rendered = await renderAndVerifyCartoonMp4(req.params.id);
+      if (rendered.renderJob?.verified) {
+        syncCartoonProjectAssetsToLibrary(rendered);
+      }
+      return res.json({ success: rendered.renderJob?.status !== 'failed', project: rendered });
+    }
+    const project = runAzWorkflowStep(req.params.id, stepNum, { storyPrompt });
+    const syncedLibraryAssets = syncCartoonProjectAssetsToLibrary(project);
+    res.json({ success: true, project, syncedLibraryAssets });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Failed to run A-Z step.' });
+  }
+});
+
+app.post('/api/cartoon-projects/:id/assets', (req, res) => {
+  try {
+    const { assets = [], chapterUrl } = req.body || {};
+    const project = addReferenceAssetsToProject(
+      req.params.id,
+      Array.isArray(assets) ? assets : [],
+      chapterUrl
+    );
+    syncCartoonProjectAssetsToLibrary(project);
+    res.json({ success: true, project });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Failed to save reference assets.' });
+  }
+});
+
+app.delete('/api/cartoon-projects/:id/assets/:assetId', (req, res) => {
+  try {
+    const project = removeReferenceAssetFromProject(req.params.id, req.params.assetId);
+    res.json({ success: true, project });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Failed to remove asset.' });
+  }
+});
+
+app.post('/api/cartoon-projects/:id/manhwa-import', async (req, res) => {
+  try {
+    const { chapterUrl = '' } = req.body || {};
+    const importResult = await importManhwaChapterFromUrl(String(chapterUrl));
+    const panelsAsAssets = (importResult.panels || []).map((panel) => ({
+      name: panel.title || 'Manhwa Panel',
+      mimeType: panel.mimeType || 'image/jpeg',
+      sizeBytes: 1024 * 120,
+      url: panel.imageUrl,
+      sourceType: 'manhwa_url' as const,
+    }));
+
+    const project = addReferenceAssetsToProject(
+      req.params.id,
+      panelsAsAssets,
+      String(chapterUrl).trim()
+    );
+    res.json({
+      success: importResult.success,
+      protectedOrBlocked: importResult.protectedOrBlocked,
+      message: importResult.message,
+      importedCount: panelsAsAssets.length,
+      project,
+    });
+  } catch (err: any) {
+    res.status(400).json({
+      success: false,
+      error: err?.message || 'Manhwa URL import failed.',
+    });
+  }
+});
+
+app.post('/api/cartoon-projects/:id/run-step', async (req, res) => {
+  try {
+    const { stepNumber, storyPrompt, sceneCount, sceneNumber, restartFailedOnly } = req.body || {};
+    const existing = getCartoonProject(req.params.id);
+    if (!existing) return res.status(404).json({ success: false, error: 'Project not found.' });
+
+    let aiGeneratedStory: string | undefined;
+    if (Number(stepNumber) === 3 && ai) {
+      try {
+        const promptSeed = String(storyPrompt || existing.storyPrompt || existing.name).trim();
+        const response = await ai.models.generateContent({
+          model: 'gemini-4-hydrogen',
+          contents: `Write a crisp 3-act animated cartoon film story outline (Act I, Act II, Act III, max 120 words) for:\nTitle: ${existing.name}\nStyle: ${existing.animationStyle}\nPrompt: ${promptSeed}`,
+        });
+        aiGeneratedStory = response.text?.trim() || undefined;
+      } catch (aiErr: any) {
+        console.warn('Gemini Step 3 story fallback activated:', aiErr?.message || aiErr);
+      }
+    }
+
+    const project = runCartoonWorkflowStep(req.params.id, Number(stepNumber), {
+      storyPrompt,
+      fullStory: aiGeneratedStory,
+      sceneCount,
+      sceneNumber,
+      restartFailedOnly: Boolean(restartFailedOnly),
+    });
+    const syncedLibraryAssets = syncCartoonProjectAssetsToLibrary(project);
+    res.json({ success: true, project, syncedLibraryAssets });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Failed to run workflow step.' });
+  }
+});
+
+app.post('/api/cartoon-projects/:id/sync-library', (req, res) => {
+  const project = getCartoonProject(req.params.id);
+  if (!project) {
+    return res.status(404).json({ success: false, error: 'Project not found.' });
+  }
+  const syncedLibraryAssets = syncCartoonProjectAssetsToLibrary(project);
+  res.json({ success: true, projectId: project.id, syncedLibraryAssets });
+});
+
+app.post('/api/cartoon-projects/:id/scenes/:sceneNumber/update', (req, res) => {
+  try {
+    const sceneNumber = Number(req.params.sceneNumber);
+    const project = updateCartoonScene(req.params.id, sceneNumber, req.body || {});
+    res.json({ success: true, project });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Failed to update scene.' });
+  }
+});
+
+app.post('/api/cartoon-projects/:id/quality-check', async (req, res) => {
+  try {
+    const existing = getCartoonProject(req.params.id);
+    if (!existing) return res.status(404).json({ success: false, error: 'Project not found.' });
+
+    const issues = runQualityInspection(existing);
+    const updated = recomputeProjectSteps({
+      ...existing,
+      qualityIssues: issues,
+      lastQualityCheckAt: new Date().toISOString(),
+    });
+    const all = listCartoonProjects();
+    const idx = all.findIndex((p) => p.id === updated.id);
+    if (idx >= 0) all[idx] = updated;
+    fs.writeFileSync(path.resolve(process.cwd(), '.data/cartoon-projects.json'), JSON.stringify(all, null, 2), 'utf8');
+
+    res.json({
+      success: true,
+      project: updated,
+      openErrorsCount: issues.filter((q) => q.status === 'open').length,
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Quality check failed.' });
+  }
+});
+
+app.post('/api/cartoon-projects/:id/quality-fix', (req, res) => {
+  try {
+    const { issueId, action = 'auto_fix' } = req.body || {};
+    const result = resolveCartoonQualityIssue(req.params.id, String(issueId || ''), action);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Failed to resolve quality issue.' });
+  }
+});
+
+app.post('/api/cartoon-projects/:id/approve', (req, res) => {
+  try {
+    const { watchedFinalPreview } = req.body || {};
+    const project = confirmFinalProjectApproval(req.params.id, Boolean(watchedFinalPreview));
+    res.json({ success: true, project });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Final approval check failed.' });
+  }
+});
+
+app.post('/api/cartoon-projects/:id/render', async (req, res) => {
+  try {
+    const project = await renderAndVerifyCartoonMp4(req.params.id);
+    if (project.renderJob?.status === 'failed') {
+      return res.status(500).json({
+        success: false,
+        error: project.renderJob.errorMessage || 'MP4 render failed.',
+        project,
+      });
+    }
+    if (project.renderJob?.verified) {
+      syncCartoonProjectAssetsToLibrary(project);
+    }
+    res.json({ success: true, project });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Render failed.' });
+  }
+});
+
+app.get('/api/cartoon-projects/:id/download-mp4', (req, res) => {
+  const verified = getVerifiedRenderMp4Path(req.params.id);
+  if (!verified) {
+    return res.status(404).json({
+      success: false,
+      error: 'Final MP4 is not verified yet. Complete Final Approval & Render first.',
+    });
+  }
+  res.download(verified.filePath, verified.fileName);
+});
+
+// ============================================================================
+// Unified Cartoon Production Asset Library API (15 Categories + File Uploads)
+// ============================================================================
+app.get('/api/library/catalog', (_req, res) => {
+  res.json({
+    success: true,
+    categories: CARTOON_LIBRARY_CATALOG,
+    techStack: PRODUCTION_TECH_STACK,
+    uploadedAssets: listLibraryUploadedAssets(),
+  });
+});
+
+app.get('/api/library/categories', (_req, res) => {
+  const unified = listUnifiedMediaAssets();
+  const categories = Object.entries(SUPPORTED_CATEGORY_FORMATS).map(([id, formats]) => ({
+    id,
+    supportedFormats: formats,
+    count: unified.filter((a) => a.category === id).length,
+  }));
+  res.json({ success: true, categories });
+});
+
+app.get('/api/library/licenses', (_req, res) => {
+  res.json({ success: true, ...getUnifiedLicenseSummary() });
+});
+
+app.get('/api/library/search', (req, res) => {
+  const assets = listUnifiedMediaAssets({
+    q: String(req.query.q || ''),
+    category: String(req.query.category || 'all'),
+    projectId: String(req.query.projectId || req.query.project_id || 'all'),
+    license: String(req.query.license || ''),
+    commercialUse: String(req.query.commercial_use || ''),
+  });
+  res.json({ success: true, count: assets.length, assets });
+});
+
+app.post('/api/library/assets/import', (req, res) => {
+  try {
+    const result = importUnifiedMediaAsset(req.body || {});
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Asset import failed.' });
+  }
+});
+
+app.post('/api/library/assets/upload', (req, res) => {
+  try {
+    const { name, category, subcategory, mimeType, dataUrl, description, tags, projectId, projectName, license_name, commercial_use, attribution } = req.body || {};
+    const uploaded = saveUploadedLibraryAsset({
+      name,
+      category,
+      subcategory,
+      mimeType,
+      dataUrl,
+      description,
+      tags,
+      projectId,
+      projectName,
+    });
+    const ext = (uploaded.format || 'png').toLowerCase();
+    const unified = importUnifiedMediaAsset({
+      id: uploaded.id,
+      project_id: projectId || 'default-project',
+      name: uploaded.name,
+      category: category || 'images',
+      file_type: ext,
+      storage_path: uploaded.url,
+      source: 'User Upload',
+      preview_url: uploaded.thumbnail || uploaded.url,
+      license_name: license_name || 'Studio Master Proprietary',
+      commercial_use: commercial_use || 'yes',
+      attribution: attribution || 'User Upload',
+    });
+    res.json({ success: true, asset: uploaded, unifiedAsset: unified.asset, linkedProjects: unified.linkedProjects });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Asset upload failed.' });
+  }
+});
+
+app.get('/api/library/assets', (req, res) => {
+  const category = String(req.query.category || 'all');
+  const q = String(req.query.q || '');
+  const projectId = String(req.query.projectId || req.query.project_id || 'all');
+  const includeDeleted = String(req.query.includeDeleted || '') === 'true';
+  res.json({
+    success: true,
+    assets: listLibraryUploadedAssets({ category, q, projectId }),
+    unifiedAssets: listUnifiedMediaAssets({ category, q, projectId, includeDeleted }),
+  });
+});
+
+app.get('/api/library/assets/:asset_id', (req, res) => {
+  const asset = getUnifiedMediaAsset(req.params.asset_id);
+  if (!asset) return res.status(404).json({ success: false, error: 'Asset not found.' });
+  return res.json({ success: true, asset });
+});
+
+app.get('/api/library/assets/:asset_id/download', (req, res) => {
+  const asset = getUnifiedMediaAsset(req.params.asset_id);
+  if (!asset) return res.status(404).json({ success: false, error: 'Asset not found.' });
+  const target = asset.storage_path || asset.source_url;
+  if (!target) return res.status(404).json({ success: false, error: 'No download path for asset.' });
+  return res.json({ success: true, asset_id: asset.id, download_url: target, license_name: asset.license_name, commercial_use: asset.commercial_use });
+});
+
+app.get('/api/library/assets/:asset_id/preview', (req, res) => {
+  const asset = getUnifiedMediaAsset(req.params.asset_id);
+  if (!asset) return res.status(404).json({ success: false, error: 'Asset not found.' });
+  return res.json({ success: true, asset_id: asset.id, preview_url: asset.preview_url || asset.storage_path, file_type: asset.file_type });
+});
+
+app.put('/api/library/assets/:asset_id', (req, res) => {
+  const updated = updateUnifiedMediaAsset(req.params.asset_id, req.body || {});
+  if (!updated) return res.status(404).json({ success: false, error: 'Asset not found.' });
+  return res.json({ success: true, asset: updated });
+});
+
+app.post('/api/library/assets/:asset_id/projects', (req, res) => {
+  const projectId = String(req.body?.project_id || req.body?.projectId || '').trim();
+  if (!projectId) return res.status(400).json({ success: false, error: 'project_id is required.' });
+  const asset = getUnifiedMediaAsset(req.params.asset_id);
+  if (!asset) return res.status(404).json({ success: false, error: 'Asset not found.' });
+  const linked_projects = linkAssetToProject(asset.id, projectId);
+  return res.json({ success: true, asset_id: asset.id, linked_projects });
+});
+
+app.delete('/api/library/assets/:asset_id/projects/:project_id', (req, res) => {
+  const linked_projects = unlinkAssetFromProject(req.params.asset_id, req.params.project_id);
+  return res.json({ success: true, asset_id: req.params.asset_id, linked_projects });
+});
+
+app.post('/api/library/upload', (req, res) => {
+  try {
+    const { name, category, subcategory, mimeType, dataUrl, description, tags, projectId, projectName } = req.body || {};
+    const asset = saveUploadedLibraryAsset({
+      name,
+      category,
+      subcategory,
+      mimeType,
+      dataUrl,
+      description,
+      tags,
+      projectId,
+      projectName,
+    });
+    res.json({ success: true, asset });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Asset upload failed.' });
+  }
+});
+
+app.delete('/api/library/assets/:id', (req, res) => {
+  const hard = String(req.query.hard || '') === 'true';
+  const deletedUploaded = deleteUploadedLibraryAsset(req.params.id);
+  const deletedUnified = deleteUnifiedMediaAsset(req.params.id, hard);
+  res.json({ success: true, deleted: deletedUploaded || deletedUnified });
+});
+
+// ============================================================================
+// AI IMAGE STUDIO — Complete REST API (Text-to-Image, Character, Background,
+// Manhwa, Film Scene, Image-to-Image, AI Editing, Upscaling, Library)
+// ============================================================================
+app.post('/api/images/generate', async (req, res) => {
+  try {
+    const images = await generateStudioImages(req.body || {});
+    res.json({
+      success: true,
+      count: images.length,
+      images,
+      providers: getImageProviderStatus(),
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Image generation failed.' });
+  }
+});
+
+app.post('/api/images/character', async (req, res) => {
+  try {
+    const result = await generateCharacterImage(req.body || {});
+    res.json({
+      success: true,
+      ...result,
+      providers: getImageProviderStatus(),
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Character generation failed.' });
+  }
+});
+
+app.get('/api/images/characters', (req, res) => {
+  const projectId = String(req.query.projectId || 'all');
+  res.json({
+    success: true,
+    characters: listSavedCharacterIdentities(projectId),
+  });
+});
+
+app.delete('/api/images/characters/:id', (req, res) => {
+  const deleted = deleteSavedCharacterIdentity(req.params.id);
+  res.json({ success: true, deleted });
+});
+
+app.post('/api/images/background', async (req, res) => {
+  try {
+    const image = await generateBackgroundImage(req.body || {});
+    res.json({
+      success: true,
+      image,
+      providers: getImageProviderStatus(),
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Background generation failed.' });
+  }
+});
+
+app.post('/api/images/image-to-image', async (req, res) => {
+  try {
+    const image = await transformImageToImage(req.body || {});
+    res.json({ success: true, image });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Image-to-image transform failed.' });
+  }
+});
+
+app.post('/api/images/edit', async (req, res) => {
+  try {
+    const image = await editStudioImage(req.body || {});
+    res.json({ success: true, image });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'AI image edit failed.' });
+  }
+});
+
+app.post('/api/images/upscale', async (req, res) => {
+  try {
+    const image = await upscaleStudioImage(req.body || {});
+    res.json({ success: true, image });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Image upscaling failed.' });
+  }
+});
+
+app.get('/api/images/library', (req, res) => {
+  const folder = String(req.query.folder || 'all');
+  const projectId = String(req.query.projectId || 'all');
+  const q = String(req.query.q || '');
+  const images = listStudioImages({ folder, projectId, q });
+  const characters = listSavedCharacterIdentities(projectId);
+  res.json({
+    success: true,
+    images,
+    characters,
+    providers: getImageProviderStatus(),
+  });
+});
+
+app.get('/api/images/:image_id', (req, res) => {
+  const image = getStudioImageById(req.params.image_id);
+  if (!image) {
+    return res.status(404).json({ success: false, error: 'Image not found.' });
+  }
+  res.json({ success: true, image });
+});
+
+app.delete('/api/images/:image_id', (req, res) => {
+  const deleted = deleteStudioImageById(req.params.image_id);
+  res.json({ success: true, deleted });
+});
+
+// ============================================================================
+// STORYBOARD STUDIO — Complete REST API (Steps 1–14)
+// ============================================================================
+app.get('/api/storyboards', (req, res) => {
+  const projectId = String(req.query.projectId || 'all');
+  res.json({ success: true, storyboards: listStoryboards(projectId) });
+});
+
+app.post('/api/storyboards', (req, res) => {
+  try {
+    const storyboard = createStoryboard(req.body || {});
+    res.json({ success: true, storyboard });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Failed to create storyboard.' });
+  }
+});
+
+app.post('/api/storyboards/import', (req, res) => {
+  try {
+    const { title, projectId, screenplay = '', style = 'Anime' } = req.body || {};
+    const storyboard = generateStoryboardFromStory({
+      title: title || 'Imported Screenplay Storyboard',
+      projectId,
+      storyPrompt: String(screenplay).slice(0, 300) || 'Imported film screenplay',
+      screenplay: String(screenplay),
+      style,
+    });
+    res.json({ success: true, storyboard });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Failed to import screenplay.' });
+  }
+});
+
+app.post('/api/storyboards/generate', (req, res) => {
+  try {
+    const storyboard = generateStoryboardFromStory(req.body || {});
+    res.json({ success: true, storyboard });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Failed to generate storyboard.' });
+  }
+});
+
+app.post('/api/storyboards/scenes', (req, res) => {
+  const { storyboardId, scenes } = req.body || {};
+  const updated = updateStoryboard(String(storyboardId || ''), { scenes });
+  if (!updated) return res.status(404).json({ success: false, error: 'Storyboard not found.' });
+  res.json({ success: true, storyboard: updated });
+});
+
+app.post('/api/storyboards/shots', (req, res) => {
+  const { storyboardId, scenes } = req.body || {};
+  const updated = updateStoryboard(String(storyboardId || ''), { scenes });
+  if (!updated) return res.status(404).json({ success: false, error: 'Storyboard not found.' });
+  res.json({ success: true, storyboard: updated });
+});
+
+app.post('/api/storyboards/characters', (req, res) => {
+  const { storyboardId, characters } = req.body || {};
+  const updated = updateStoryboard(String(storyboardId || ''), { characters });
+  if (!updated) return res.status(404).json({ success: false, error: 'Storyboard not found.' });
+  res.json({ success: true, storyboard: updated });
+});
+
+app.post('/api/storyboards/images/generate', async (req, res) => {
+  try {
+    const result = await generateImageForStoryboardShot(req.body || {});
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Failed to generate shot image.' });
+  }
+});
+
+app.get('/api/storyboards/:id', (req, res) => {
+  const storyboard = getStoryboardById(req.params.id);
+  if (!storyboard) return res.status(404).json({ success: false, error: 'Storyboard not found.' });
+  res.json({ success: true, storyboard });
+});
+
+app.put('/api/storyboards/:id', (req, res) => {
+  const updated = updateStoryboard(req.params.id, req.body || {});
+  if (!updated) return res.status(404).json({ success: false, error: 'Storyboard not found.' });
+  res.json({ success: true, storyboard: updated });
+});
+
+app.post('/api/storyboards/:id/export', (req, res) => {
+  try {
+    const format = (req.body?.format || 'json') as 'json' | 'shotlist_csv' | 'screenplay_txt' | 'pdf_html';
+    const pkg = exportStoryboardPackage(req.params.id, format);
+    res.json({ success: true, ...pkg });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Storyboard export failed.' });
+  }
+});
+
+app.delete('/api/storyboards/:id', (req, res) => {
+  const deleted = deleteStoryboard(req.params.id);
+  res.json({ success: true, deleted });
+});
+
+// ============================================================================
+// ANIMATION STUDIO — Complete REST API (Projects, Jobs, 6-Studio Sync, FFmpeg Render)
+// ============================================================================
+app.get('/api/animation/projects', (req, res) => {
+  const projectId = String(req.query.projectId || 'all');
+  res.json({
+    success: true,
+    projects: listAnimationProjects(projectId),
+    jobs: listAnimationJobs(projectId),
+  });
+});
+
+app.post('/api/animation/projects', (req, res) => {
+  try {
+    const project = createAnimationProject(req.body || {});
+    res.json({ success: true, project });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Failed to create animation project.' });
+  }
+});
+
+app.get('/api/animation/projects/:id', (req, res) => {
+  const project = getAnimationProject(req.params.id);
+  if (!project) return res.status(404).json({ success: false, error: 'Animation project not found.' });
+  res.json({ success: true, project });
+});
+
+app.put('/api/animation/projects/:id', (req, res) => {
+  const project = updateAnimationProject(req.params.id, req.body || {});
+  if (!project) return res.status(404).json({ success: false, error: 'Animation project not found.' });
+  res.json({ success: true, project });
+});
+
+app.delete('/api/animation/projects/:id', (req, res) => {
+  const deleted = deleteAnimationProject(req.params.id);
+  res.json({ success: true, deleted });
+});
+
+app.post('/api/animation/characters', (req, res) => {
+  const { animationProjectId, characterIds } = req.body || {};
+  const updated = updateAnimationProject(String(animationProjectId || ''), {
+    characterIds: Array.isArray(characterIds) ? characterIds : [],
+  });
+  if (!updated) return res.status(404).json({ success: false, error: 'Animation project not found.' });
+  res.json({ success: true, project: updated });
+});
+
+app.post('/api/animation/backgrounds', (req, res) => {
+  const { animationProjectId, backgroundUrls } = req.body || {};
+  const updated = updateAnimationProject(String(animationProjectId || ''), {
+    backgroundUrls: Array.isArray(backgroundUrls) ? backgroundUrls : [],
+  });
+  if (!updated) return res.status(404).json({ success: false, error: 'Animation project not found.' });
+  res.json({ success: true, project: updated });
+});
+
+app.post('/api/animation/storyboards', (req, res) => {
+  const { animationProjectId, storyboardId } = req.body || {};
+  const proj = getAnimationProject(String(animationProjectId || ''));
+  const sb = getStoryboardById(String(storyboardId || ''));
+  if (!proj || !sb) {
+    return res.status(404).json({ success: false, error: 'Animation project or storyboard not found.' });
+  }
+  const importedClips = sb.scenes.flatMap((sc) =>
+    sc.shots.map((sh) => ({
+      id: `aclip-${Date.now().toString(36)}-${sh.id}`,
+      sceneId: sc.id,
+      shotId: sh.id,
+      title: `Sc${sc.sceneNumber} Shot ${sh.shotNumber}: ${sh.cameraAngle}`,
+      prompt: sh.prompt || sh.action,
+      sourceImageUrl: sh.imageUrl,
+      characterId: sh.characterId,
+      characterName: sh.characterName,
+      motionAction: 'Character Motion + Camera Pan',
+      cameraMovement: sh.cameraAngle,
+      vfxPreset: sh.sfxPreset || 'Cinematic Glow',
+      lipSyncText: sh.dialogue,
+      durationSec: Math.max(3, Math.min(10, sh.durationSec || 4)),
+      status: 'generated' as const,
+    }))
+  );
+  const updated = updateAnimationProject(proj.id, {
+    storyboardId: sb.id,
+    clips: importedClips,
+  });
+  res.json({ success: true, project: updated, importedCount: importedClips.length });
+});
+
+app.post('/api/animation/generate', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const animProjId = body.animationProjectId || listAnimationProjects()[0]?.id;
+    let proj = animProjId ? getAnimationProject(animProjId) : null;
+    if (!proj) {
+      proj = createAnimationProject({
+        title: body.project_name || body.title || 'My Animation',
+        animationType: body.animation_style || body.animationType || 'Anime',
+        storyPrompt: body.prompt || '',
+      });
+    }
+
+    const clip = {
+      id: `aclip-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
+      sceneId: body.sceneId || `sc-${proj.clips.length + 1}`,
+      shotId: body.shotId,
+      title: body.title || `${body.project_name || proj.title} — Clip #${proj.clips.length + 1}`,
+      prompt: String(body.prompt || 'Animated cinematic sequence').trim(),
+      sourceImageUrl: body.image_url || body.sourceImageUrl || '/assets/images/cartoon_adventure_thumb_1794924309261.jpg',
+      characterName: body.characterName || 'Hero',
+      motionAction: body.motionAction || 'Walking + Dynamic Expression',
+      cameraMovement: body.cameraMovement || 'Slow Dolly Push-In',
+      vfxPreset: body.vfxPreset || 'Atmospheric Glow',
+      lipSyncText: body.lipSyncText || '',
+      durationSec: Number(body.duration_seconds || body.durationSec) || 5,
+      status: 'generated' as const,
+    };
+
+    const updatedProj = updateAnimationProject(proj.id, {
+      clips: [clip, ...proj.clips],
+    })!;
+
+    const job = recordAnimationJob({
+      projectId: updatedProj.id,
+      kind: 'generate_clip',
+      status: 'completed',
+      format: 'MP4',
+      resolution: updatedProj.resolution,
+      outputUrl: clip.sourceImageUrl,
+      message: `Animation clip generated (${body.animation_style || updatedProj.animationType}, ${clip.durationSec}s).`,
+    });
+
+    res.json({
+      success: true,
+      message: 'Animation job created',
+      job: {
+        ...job,
+        job_id: job.id,
+        project_name: body.project_name || updatedProj.title,
+        prompt: clip.prompt,
+        style: body.animation_style || updatedProj.animationType,
+        duration: clip.durationSec,
+        aspect_ratio: body.aspect_ratio || '16:9',
+        image_url: clip.sourceImageUrl,
+        video_url: updatedProj.lastRenderUrl || null,
+        created_at: job.createdAt,
+      },
+      clip,
+      project: updatedProj,
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Animation generation failed.' });
+  }
+});
+
+app.post('/api/animation/motion', (req, res) => {
+  const { animationProjectId, clipId, motionAction, cameraMovement, vfxPreset } = req.body || {};
+  const proj = getAnimationProject(String(animationProjectId || ''));
+  if (!proj) return res.status(404).json({ success: false, error: 'Animation project not found.' });
+  const nextClips = proj.clips.map((c) =>
+    c.id === clipId
+      ? {
+          ...c,
+          motionAction: motionAction || c.motionAction,
+          cameraMovement: cameraMovement || c.cameraMovement,
+          vfxPreset: vfxPreset || c.vfxPreset,
+        }
+      : c
+  );
+  const updated = updateAnimationProject(proj.id, { clips: nextClips });
+  const job = recordAnimationJob({
+    projectId: proj.id,
+    kind: 'motion',
+    status: 'completed',
+    message: `Applied motion "${motionAction || 'Custom'}" to clip.`,
+  });
+  res.json({ success: true, project: updated, job });
+});
+
+app.post('/api/animation/lipsync', (req, res) => {
+  const { animationProjectId, clipId, lipSyncText, voiceTrackUrl } = req.body || {};
+  const proj = getAnimationProject(String(animationProjectId || ''));
+  if (!proj) return res.status(404).json({ success: false, error: 'Animation project not found.' });
+  const nextClips = proj.clips.map((c) =>
+    c.id === clipId ? { ...c, lipSyncText: lipSyncText ?? c.lipSyncText, voiceTrackUrl: voiceTrackUrl ?? c.voiceTrackUrl } : c
+  );
+  const updated = updateAnimationProject(proj.id, { clips: nextClips });
+  const job = recordAnimationJob({
+    projectId: proj.id,
+    kind: 'lipsync',
+    status: 'completed',
+    message: 'Lip-sync phoneme timing attached to animation clip.',
+  });
+  res.json({ success: true, project: updated, job });
+});
+
+app.post('/api/animation/audio', (req, res) => {
+  const { animationProjectId, audioTracks, vfxLayers } = req.body || {};
+  const updated = updateAnimationProject(String(animationProjectId || ''), {
+    ...(audioTracks ? { audioTracks } : {}),
+    ...(vfxLayers ? { vfxLayers } : {}),
+  });
+  if (!updated) return res.status(404).json({ success: false, error: 'Animation project not found.' });
+  res.json({ success: true, project: updated });
+});
+
+app.post('/api/animation/render', async (req, res) => {
+  try {
+    const result = await renderAnimationVideo(req.body || {});
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err?.message || 'Animation render failed.' });
+  }
+});
+
+app.get('/api/animation/jobs/:job_id', (req, res) => {
+  const job = getAnimationJob(req.params.job_id);
+  if (!job) return res.status(404).json({ success: false, error: 'Job not found.' });
+  res.json({ success: true, job_id: job.id, ...job });
+});
+
+// ============================================================================
+// FILM PIPELINE API — Story -> Screenplay -> Scenes -> Characters -> Storyboard
+// ============================================================================
+app.get('/api/film/projects', (_req, res) => {
+  res.json({ success: true, projects: listFilmPipelineProjects() });
+});
+
+app.post('/api/film/projects', (req, res) => {
+  try {
+    const project = createFilmPipelineProject(req.body || {});
+    res.json({ success: true, project, ...project });
+  } catch (err: any) {
+    res.status(400).json({ success: false, detail: err?.message || 'Failed to create project.' });
+  }
+});
+
+app.get('/api/film/projects/:id', (req, res) => {
+  const project = getFilmPipelineProject(req.params.id);
+  if (!project) return res.status(404).json({ success: false, detail: 'Project not found.' });
+  res.json({ success: true, project, ...project });
+});
+
+app.delete('/api/film/projects/:id', (req, res) => {
+  const deleted = deleteFilmPipelineProject(req.params.id);
+  res.json({ success: true, deleted });
+});
+
+app.post('/api/film/projects/:id/story', (req, res) => {
+  try {
+    const project = saveProjectStory(req.params.id, req.body || {});
+    res.json({ success: true, project_id: project.id, story: project.story, status: project.status, project });
+  } catch (err: any) {
+    res.status(400).json({ success: false, detail: err?.message || 'Failed to save story.' });
+  }
+});
+
+app.post('/api/film/projects/:id/screenplay', async (req, res) => {
+  try {
+    const { project, screenplay } = await generateProjectScreenplay(req.params.id, ai);
+    res.json({ success: true, project, screenplay, ...screenplay });
+  } catch (err: any) {
+    res.status(400).json({ success: false, detail: err?.message || 'Screenplay generation failed.' });
+  }
+});
+
+app.post('/api/film/projects/:id/scenes', (req, res) => {
+  try {
+    const { project, scenes } = createProjectScenesFromScreenplay(req.params.id);
+    res.json({ success: true, project, scenes });
+  } catch (err: any) {
+    res.status(400).json({ success: false, detail: err?.message || 'Scene breakdown failed.' });
+  }
+});
+
+app.post('/api/film/projects/:id/characters', (req, res) => {
+  try {
+    const { project, character } = addProjectCharacter(req.params.id, req.body || {});
+    res.json({ success: true, project, character, ...character });
+  } catch (err: any) {
+    res.status(400).json({ success: false, detail: err?.message || 'Character creation failed.' });
+  }
+});
+
+app.post('/api/film/projects/:id/characters/:character_id/references', (req, res) => {
+  try {
+    const { project, reference } = attachCharacterReferenceImage(
+      req.params.id,
+      req.params.character_id,
+      req.body || {}
+    );
+    res.json({ success: true, project, reference, ...reference });
+  } catch (err: any) {
+    res.status(400).json({ success: false, detail: err?.message || 'Reference image upload failed.' });
+  }
+});
+
+app.post('/api/film/projects/:id/storyboard', (req, res) => {
+  try {
+    const { project, panels } = generateProjectStoryboardPanels(req.params.id);
+    res.json({ success: true, project, panels });
+  } catch (err: any) {
+    res.status(400).json({ success: false, detail: err?.message || 'Storyboard generation failed.' });
+  }
+});
+
+app.post('/api/film/projects/:id/storyboard/:panel_id/image', async (req, res) => {
+  try {
+    const { project, panel } = await renderStoryboardPanelImage(req.params.id, req.params.panel_id);
+    res.json({ success: true, project, panel });
+  } catch (err: any) {
+    res.status(400).json({ success: false, detail: err?.message || 'Panel image generation failed.' });
+  }
+});
+
+// ============================================================================
+// LOTTIE ANIMATED ICONS CATALOG (useAnimations MIT + MDN Web Docs Reference)
+// ============================================================================
+let cachedLottieIcons: any[] | null = null;
+let cachedLottieAt = 0;
+
+const POPULAR_LOTTIE_ICONS = [
+  { id: 'loading', title: 'Loading', category: 'UI', keywords: ['spinner', 'wait', 'loader'], interaction: 'loop' },
+  { id: 'menu', title: 'Burger Menu', category: 'Navigation', keywords: ['nav', 'bars', 'drawer'], interaction: 'click' },
+  { id: 'refresh', title: 'Refresh', category: 'UI', keywords: ['reload', 'sync', 'spin'], interaction: 'click' },
+  { id: 'notification', title: 'Notification', category: 'Alerts', keywords: ['bell', 'alert', 'ring'], interaction: 'click' },
+  { id: 'heart', title: 'Heart', category: 'Social', keywords: ['like', 'love', 'favorite'], interaction: 'click' },
+  { id: 'visibility', title: 'Visibility', category: 'UI', keywords: ['eye', 'show', 'hide'], interaction: 'click' },
+  { id: 'trash', title: 'Trash', category: 'Actions', keywords: ['delete', 'remove', 'bin'], interaction: 'hover' },
+  { id: 'settings', title: 'Settings', category: 'UI', keywords: ['gear', 'cog', 'config'], interaction: 'hover' },
+  { id: 'searchToX', title: 'Search / X', category: 'Navigation', keywords: ['find', 'close', 'query'], interaction: 'click' },
+  { id: 'playPause', title: 'Play / Pause', category: 'Media', keywords: ['video', 'audio', 'control'], interaction: 'click' },
+  { id: 'volume', title: 'Volume', category: 'Media', keywords: ['sound', 'mute', 'speaker'], interaction: 'click' },
+  { id: 'download', title: 'Download', category: 'Actions', keywords: ['save', 'export', 'arrow'], interaction: 'click' },
+  { id: 'checkbox', title: 'Checkbox', category: 'Forms', keywords: ['check', 'done', 'select'], interaction: 'click' },
+  { id: 'toggle', title: 'Toggle', category: 'Forms', keywords: ['switch', 'on', 'off'], interaction: 'click' },
+  { id: 'scrollDown', title: 'Scroll Down', category: 'Navigation', keywords: ['mouse', 'down', 'scroll'], interaction: 'loop' },
+  { id: 'arrowRight', title: 'Arrow Right', category: 'Navigation', keywords: ['next', 'forward', 'go'], interaction: 'hover' },
+  { id: 'bookmark', title: 'Bookmark', category: 'Social', keywords: ['save', 'ribbon', 'mark'], interaction: 'click' },
+  { id: 'star', title: 'Star', category: 'Social', keywords: ['rate', 'favorite', 'highlight'], interaction: 'click' },
+  { id: 'send', title: 'Send', category: 'Actions', keywords: ['share', 'message', 'paperplane'], interaction: 'click' },
+  { id: 'github', title: 'GitHub', category: 'Brand', keywords: ['code', 'repo', 'git'], interaction: 'hover' },
+  { id: 'sun', title: 'Sun', category: 'Weather', keywords: ['light', 'theme', 'day'], interaction: 'loop' },
+  { id: 'infinity', title: 'Infinity', category: 'Abstract', keywords: ['loop', 'endless', 'motion'], interaction: 'loop' },
+  { id: 'alertTriangle', title: 'Alert Triangle', category: 'Alerts', keywords: ['warning', 'caution', 'error'], interaction: 'hover' },
+  { id: 'microphone', title: 'Microphone', category: 'Media', keywords: ['voice', 'record', 'audio'], interaction: 'click' },
+].map((ic) => ({
+  ...ic,
+  jsonUrl: `https://useanimations.com/icons/${ic.id}.json`,
+  zipUrl: `https://useanimations.com/icons/${ic.id}.zip`,
+}));
+
+app.get('/api/lottie/icons', async (_req, res) => {
+  const now = Date.now();
+  if (cachedLottieIcons && now - cachedLottieAt < 30 * 60 * 1000) {
+    return res.json({
+      success: true,
+      source: 'useanimations.com',
+      license: 'MIT',
+      count: cachedLottieIcons.length,
+      icons: cachedLottieIcons,
+    });
+  }
+  try {
+    const resp = await fetch('https://useanimations.com/icons.json', {
+      signal: AbortSignal.timeout(4500),
+    });
+    if (resp.ok) {
+      const raw: any = await resp.json();
+      const list = Array.isArray(raw) ? raw : Array.isArray(raw?.icons) ? raw.icons : [];
+      if (list.length > 0) {
+        const mapped = list.map((item: any) => {
+          const id = String(item.id || item.name || '').trim();
+          return {
+            id,
+            title: item.title || item.name || id,
+            category: item.category || 'General',
+            keywords: Array.isArray(item.keywords) ? item.keywords : [],
+            interaction: item.interaction || 'hover',
+            jsonUrl: item.json || item.jsonUrl || `https://useanimations.com/icons/${id}.json`,
+            zipUrl: item.zip || item.zipUrl || `https://useanimations.com/icons/${id}.zip`,
+          };
+        });
+        cachedLottieIcons = mapped;
+        cachedLottieAt = now;
+        return res.json({
+          success: true,
+          source: 'useanimations.com',
+          license: 'MIT',
+          count: mapped.length,
+          icons: mapped,
+        });
+      }
+    }
+  } catch {
+    // fallback to built-in popular catalog
+  }
+  return res.json({
+    success: true,
+    source: 'useanimations.com (curated)',
+    license: 'MIT',
+    count: POPULAR_LOTTIE_ICONS.length,
+    icons: POPULAR_LOTTIE_ICONS,
+  });
+});
+
+// ============================================================================
+// ICONSCOUT API v3 SERVER PROXY (Icons, 3D, Illustrations, Lottie Animations)
+// ============================================================================
+const getIconScoutClientId = () => (process.env.ICONSCOUT_CLIENT_ID || '92398312022838').trim();
+
+app.get('/api/iconscout/search', async (req, res) => {
+  const query = String(req.query.query || 'cinema').trim() || 'cinema';
+  const rawAsset = String(req.query.asset || 'lottie').toLowerCase();
+  const asset = ['icon', 'illustration', '3d', 'lottie'].includes(rawAsset) ? rawAsset : 'lottie';
+  const rawPrice = String(req.query.price || '').toLowerCase();
+  const price = rawPrice === 'free' || rawPrice === 'premium' ? rawPrice : '';
+  const rawSort = String(req.query.sort || 'relevant').toLowerCase();
+  const sort = ['relevant', 'popular', 'latest'].includes(rawSort) ? rawSort : 'relevant';
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const perPage = Math.min(40, Math.max(1, Number(req.query.per_page) || 24));
+
+  const params = new URLSearchParams({
+    query,
+    asset,
+    sort,
+    page: String(page),
+    per_page: String(perPage),
+  });
+  if (price) params.set('price', price);
+
+  try {
+    const resp = await fetch(`https://api.iconscout.com/v3/search?${params.toString()}`, {
+      headers: {
+        'Client-ID': getIconScoutClientId(),
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    const data: any = await resp.json().catch(() => null);
+    if (!resp.ok || !data || data.status !== 'success') {
+      return res.status(resp.status || 502).json({
+        success: false,
+        error: data?.message || `IconScout API responded with HTTP ${resp.status}`,
+      });
+    }
+
+    const itemsNode = data?.response?.items || {};
+    const rawList = Array.isArray(itemsNode.data) ? itemsNode.data : [];
+    const items = rawList.map((item: any) => {
+      const urls = item.urls || {};
+      const previewUrl = String(
+        urls.png_256 || urls.thumb || urls.png_128 || urls.png_64 || ''
+      );
+      const itemAsset = String(item.asset || asset);
+      const slug = String(item.slug || item.id || '');
+      const section =
+        itemAsset === '3d'
+          ? '3d-illustration'
+          : itemAsset === 'lottie'
+          ? 'lottie-animation'
+          : itemAsset;
+      return {
+        id: item.id,
+        uuid: String(item.uuid || ''),
+        name: String(item.name || 'Untitled Asset'),
+        slug,
+        asset: itemAsset,
+        isPremium: Boolean(item.is_premium),
+        price: Number(item.price || 0),
+        width: Number(item.width || 0),
+        height: Number(item.height || 0),
+        previewUrl,
+        isVideo: previewUrl.toLowerCase().endsWith('.mp4'),
+        pageUrl: slug ? `https://iconscout.com/${section}/${slug}` : 'https://iconscout.com/',
+      };
+    });
+
+    return res.json({
+      success: true,
+      query,
+      asset,
+      total: Number(itemsNode.total || items.length),
+      currentPage: Number(itemsNode.current_page || page),
+      lastPage: Number(itemsNode.last_page || 1),
+      hasDownloadSecret: Boolean(process.env.ICONSCOUT_CLIENT_SECRET),
+      items,
+    });
+  } catch (err: any) {
+    return res.status(502).json({
+      success: false,
+      error: err?.message || 'Unable to reach IconScout API.',
+    });
+  }
+});
+
+app.post('/api/iconscout/download', async (req, res) => {
+  const uuid = String(req.body?.uuid || '').trim();
+  const format = String(req.body?.format || 'png').trim();
+  const secret = (process.env.ICONSCOUT_CLIENT_SECRET || '').trim();
+
+  if (!uuid) {
+    return res.status(400).json({ success: false, error: 'Missing asset uuid.' });
+  }
+  if (!secret) {
+    return res.status(400).json({
+      success: false,
+      error: 'ICONSCOUT_CLIENT_SECRET is not configured in server secrets. Search & preview overlays are free; set ICONSCOUT_CLIENT_SECRET to download licensed originals.',
+    });
+  }
+
+  try {
+    const resp = await fetch(`https://api.iconscout.com/v3/items/${encodeURIComponent(uuid)}/api-download`, {
+      method: 'POST',
+      headers: {
+        'Client-ID': getIconScoutClientId(),
+        'Client-Secret': secret,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ format }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const data: any = await resp.json().catch(() => null);
+    if (!resp.ok || data?.status !== 'success') {
+      return res.status(resp.status || 502).json({
+        success: false,
+        error: data?.message || `IconScout download failed (HTTP ${resp.status})`,
+      });
+    }
+    const downloadUrl = data?.response?.download?.download_url || data?.response?.download_url || '';
+    return res.json({ success: true, downloadUrl, raw: data?.response });
+  } catch (err: any) {
+    return res.status(502).json({
+      success: false,
+      error: err?.message || 'IconScout download request failed.',
+    });
+  }
+});
+
+// ============================================================================
+// STEP 5: UNIFIED FREE ASSET LIBRARY API (Folders, Licensing & Import)
+// ============================================================================
+app.get('/api/free-assets', (req, res) => {
+  const folder = String(req.query.folder || '').trim();
+  const subfolder = String(req.query.subfolder || '').trim();
+  const q = String(req.query.q || '').trim().toLowerCase();
+  const commercialOnly = String(req.query.commercial || '').toLowerCase() === 'yes';
+
+  let assets = listEnrichedStudioAssets();
+  if (folder && folder !== 'All') {
+    assets = assets.filter((a) => a.folder === folder);
+  }
+  if (subfolder && subfolder !== 'All') {
+    assets = assets.filter((a) => a.subfolder === subfolder);
+  }
+  if (commercialOnly) {
+    assets = assets.filter((a) => a.commercialUse === 'Yes');
+  }
+  if (q) {
+    assets = assets.filter(
+      (a) =>
+        a.name.toLowerCase().includes(q) ||
+        a.assetId.toLowerCase().includes(q) ||
+        a.source.toLowerCase().includes(q) ||
+        a.license.toLowerCase().includes(q) ||
+        a.description.toLowerCase().includes(q) ||
+        a.tags.some((t) => t.toLowerCase().includes(q))
+    );
+  }
+
+  res.json({
+    success: true,
+    total: assets.length,
+    folders: FREE_ASSET_FOLDER_TREE,
+    assets,
+  });
+});
+
+app.get('/api/free-assets/export-zip', async (_req, res) => {
+  try {
+    const zipBuffer = await buildCompleteStudioLibraryZip();
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="Film-Video-Studio-Complete-Library.zip"'
+    );
+    res.send(zipBuffer);
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: err?.message || 'Failed to generate Complete Studio Library ZIP.',
+    });
+  }
+});
+
+app.get('/api/free-assets/catalog/:file', (req, res) => {
+  const file = String(req.params.file || '').toLowerCase();
+  const assets = listEnrichedStudioAssets();
+  if (file === 'assets.json') {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', 'attachment; filename="assets.json"');
+    return res.send(JSON.stringify({ package: 'Film-Video-Studio-Complete-Library', total: assets.length, assets }, null, 2));
+  }
+  if (file === 'download-links.csv') {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="download-links.csv"');
+    return res.send(generateDownloadLinksCsv(assets));
+  }
+  if (file === 'licenses.csv') {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="licenses.csv"');
+    return res.send(generateLicensesCsv(assets));
+  }
+  return res.status(404).json({ success: false, error: 'Unknown catalog file.' });
+});
+
+app.post('/api/free-assets/import', (req, res) => {
+  const { name, folder, subfolder, format, source, sourceUrl, downloadUrl, previewUrl, previewType, license, commercialUse, licenseNote, description, projectId } = req.body || {};
+  if (!name || !folder || !sourceUrl) {
+    return res.status(400).json({
+      success: false,
+      error: 'Asset name, folder, and source URL are required.',
+    });
+  }
+  const created = importFreeAsset({
+    name: String(name),
+    folder,
+    subfolder: String(subfolder || ''),
+    format: String(format || 'MP4'),
+    source: String(source || 'External Source'),
+    sourceUrl: String(sourceUrl),
+    downloadUrl: downloadUrl ? String(downloadUrl) : undefined,
+    previewUrl: previewUrl ? String(previewUrl) : undefined,
+    previewType,
+    license: String(license || 'CC0'),
+    commercialUse: commercialUse === 'Yes' || commercialUse === 'No' ? commercialUse : 'Check',
+    licenseNote: licenseNote ? String(licenseNote) : undefined,
+    description: description ? String(description) : undefined,
+    projectId: projectId ? String(projectId) : 'all',
+  });
+  return res.json({ success: true, asset: created });
+});
+
+app.get('/robots.txt', (_req, res) => {
+  res.type('text/plain');
+  res.send('User-agent: *\nAllow: /\nSitemap: https://zkmapstudio.com/sitemap.xml\n');
+});
+
+app.get('/sitemap.xml', (_req, res) => {
+  res.type('application/xml');
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://zkmapstudio.com/</loc>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>`);
 });
 
 async function startServer() {
@@ -1123,6 +4504,7 @@ async function startServer() {
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
   } else {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

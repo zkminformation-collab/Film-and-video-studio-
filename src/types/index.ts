@@ -1,5 +1,6 @@
 export type StudioModule =
   | 'dashboard'
+  | 'cartoon_creator'
   | 'films'
   | 'editor'
   | 'ai_manager'
@@ -22,7 +23,10 @@ export type StudioModule =
   | 'cloud_storage'
   | 'team'
   | 'settings'
-  | 'ai_wizard';
+  | 'ai_wizard'
+  | 'manhwa_studio'
+  | 'social_media'
+  | 'blogger';
 
 export type ViewPlatform =
   | 'workstation'
@@ -33,7 +37,7 @@ export type ViewPlatform =
   | 'code_viewer'
   | 'deliverables';
 
-export type StudioTheme = 'creative' | 'cinematic' | 'premiere';
+export type StudioTheme = 'elevenlabs' | 'creative' | 'cinematic' | 'premiere';
 
 export interface FilmProject {
   id: string;
@@ -199,7 +203,7 @@ export interface PromptTemplate {
 
 export interface CreditWallet {
   balance: number;
-  plan: 'Free' | 'Creator' | 'Professional' | 'Unlimited' | 'Enterprise';
+  plan: string;
   unlimitedFairUseCap: number; // monthly safety threshold
   creditsUsedThisMonth: number;
   providerSpendThisMonthUsd: number;
