@@ -123,9 +123,16 @@ function resolveDataDir(): string {
 const DATA_DIR = resolveDataDir();
 const DB_FILE = path.join(DATA_DIR, 'social_media_db.json');
 
+const tokenSecret = process.env.SOCIAL_TOKEN_SECRET;
+if (process.env.NODE_ENV === 'production' && (!tokenSecret || tokenSecret.length < 32)) {
+  throw new Error('SOCIAL_TOKEN_SECRET must be configured with at least 32 characters in production');
+}
+if (!tokenSecret) {
+  console.warn('SOCIAL_TOKEN_SECRET unset: using ephemeral key; OAuth tokens will not survive restart.');
+}
 const ENCRYPTION_SECRET = crypto
   .createHash('sha256')
-  .update(process.env.SOCIAL_TOKEN_SECRET || 'film-video-studio-ultimate-token-vault-key')
+  .update(tokenSecret || crypto.randomBytes(32).toString('hex'))
   .digest();
 
 function encryptTokenPayload(payload: object): { iv: string; tag: string; ciphertext: string } {

@@ -1,0 +1,36 @@
+name: Phase 1 CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.5'
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run lint
+      - name: Phase 1 security regression tests
+        run: bun run test
+      - name: Build frontend
+        run: bun run build
+      - name: Verify production entrypoint
+        run: |
+          node -e "const p=require('./package.json');if(!p.scripts.start.includes('--import tsx'))process.exit(1);if(!p.dependencies.tsx)process.exit(1)"
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist/
