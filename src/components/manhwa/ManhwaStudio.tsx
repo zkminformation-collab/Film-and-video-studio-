@@ -38,6 +38,7 @@ import type {
 import { UniversalAsset } from '../../data/libraryData';
 import { useStudioAi } from '../../context/StudioAiContext';
 import { soundFx } from '../../utils/audioSynth';
+import { ManhwaLibraryWorkspace } from './ManhwaLibraryWorkspace';
 
 export type ManhwaAnimationStyle =
   | 'Ken Burns Motion'
@@ -260,6 +261,9 @@ function getMotionTransform(
 export const ManhwaStudio: React.FC<ManhwaStudioProps> = ({ activeFilm, onSendToEditor }) => {
   const { addAssetToTimeline, addAudioClip, addQueueItem } = useStudioAi();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [studioMode, setStudioMode] = useState<'library' | 'video'>('library');
+  const [linkedChapterId, setLinkedChapterId] = useState<string | null>(null);
 
   const [chapterTitle, setChapterTitle] = useState<string>(
     `${activeFilm.title} · Manhwa Chapter 1`
@@ -850,6 +854,19 @@ export const ManhwaStudio: React.FC<ManhwaStudioProps> = ({ activeFilm, onSendTo
         progress: 100,
       });
 
+      if (linkedChapterId && exportFormat === 'mp4') {
+        fetch(`/api/manhwa/chapters/${encodeURIComponent(linkedChapterId)}/video-jobs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: data.fileName || chapterTitle,
+            resolution: data.resolution || '1080x1920',
+            duration_sec: data.durationSec || totalChapterDuration,
+            video_url: objectUrl,
+          }),
+        }).catch(() => {});
+      }
+
       soundFx.playCinematicImpact();
       setStatusMessage({
         type: 'success',
@@ -881,8 +898,64 @@ export const ManhwaStudio: React.FC<ManhwaStudioProps> = ({ activeFilm, onSendTo
       ? Math.min(1, panelElapsedSec / selectedPanel.durationSec)
       : 0;
 
+  const handleLoadChapterIntoVideoStudio = (payload: {
+    seriesTitle: string;
+    chapterId: string;
+    chapterTitle: string;
+    panels: ManhwaPanelItem[];
+  }) => {
+    setLinkedChapterId(payload.chapterId);
+    setChapterTitle(`${payload.seriesTitle} · ${payload.chapterTitle}`);
+    if (payload.panels.length > 0) {
+      setPanels(payload.panels);
+      setSelectedPanelId(payload.panels[0].id);
+    }
+    setStatusMessage({
+      type: 'success',
+      text: `Loaded "${payload.chapterTitle}" (${payload.panels.length} panels) from Manhwa Library. Ready to animate, voice & export MP4.`,
+    });
+    setStudioMode('video');
+  };
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[#090b11] text-slate-100">
+      {/* Mode Switcher: Manhwa Library & Chapters vs AI Video & Animation Studio */}
+      <div className="px-6 py-2.5 border-b border-slate-800 bg-slate-950 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setStudioMode('library')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
+              studioMode === 'library'
+                ? 'bg-amber-500 text-black'
+                : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
+            }`}
+          >
+            Manhwa Library &amp; Chapters
+          </button>
+          <button
+            type="button"
+            onClick={() => setStudioMode('video')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
+              studioMode === 'video'
+                ? 'bg-purple-600 text-white'
+                : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
+            }`}
+          >
+            AI Manhwa-to-Video &amp; MP4 Studio
+          </button>
+        </div>
+        {linkedChapterId && studioMode === 'video' && (
+          <span className="text-xs text-amber-300 truncate max-w-md">
+            Linked Chapter: {chapterTitle}
+          </span>
+        )}
+      </div>
+
+      {studioMode === 'library' ? (
+        <ManhwaLibraryWorkspace onSendChapterToVideoStudio={handleLoadChapterIntoVideoStudio} />
+      ) : (
+        <>
       {/* Top Studio Header Bar */}
       <div className="px-6 py-4 border-b border-slate-800 bg-[#0d111c] flex flex-wrap items-center justify-between gap-4">
         <div className="space-y-1">
@@ -1766,6 +1839,8 @@ export const ManhwaStudio: React.FC<ManhwaStudioProps> = ({ activeFilm, onSendTo
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 };

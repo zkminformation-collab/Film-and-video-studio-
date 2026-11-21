@@ -43,6 +43,40 @@ import {
   getUnifiedLicenseSummary,
 } from './server/unifiedMediaStore.ts';
 import {
+  PROMPT_26_CATEGORIES,
+  listDesigns,
+  createDesign,
+  toggleDesignFavourite,
+  listPrompts,
+  listPromptVersions,
+  createPrompt,
+  updatePrompt,
+  duplicatePrompt,
+  importPromptsBatch,
+  togglePromptFavourite,
+  recordPromptUsage,
+  listTemplates,
+} from './server/designPromptStore.ts';
+import {
+  listManhwaSeries,
+  createManhwaSeries,
+  getManhwaSeriesDetail,
+  updateManhwaSeries,
+  deleteManhwaSeries,
+  createManhwaChapter,
+  reorderManhwaChapters,
+  getManhwaChapterDetail,
+  updateManhwaChapter,
+  deleteManhwaChapter,
+  addManhwaPages,
+  deleteManhwaPage,
+  detectChapterPanels,
+  addOrExtractChapterCharacters,
+  addOrExtractChapterDialogue,
+  generateChapterScenePrompts,
+  recordChapterVideoJob,
+} from './server/manhwaLibraryStore.ts';
+import {
   buildBloggerOAuthUrl,
   completeBloggerOAuthCallback,
   connectBloggerSandbox,
@@ -4471,6 +4505,239 @@ app.post('/api/free-assets/import', (req, res) => {
     projectId: projectId ? String(projectId) : 'all',
   });
   return res.json({ success: true, asset: created });
+});
+
+// ============================================================================
+// PHASE 4: DESIGN LIBRARY, VARIABLE PROMPT LIBRARY & TEMPLATE LIBRARY API
+// ============================================================================
+app.get('/api/designs', (_req, res) => {
+  const designs = listDesigns();
+  res.json({ success: true, total: designs.length, designs });
+});
+
+app.post('/api/designs', (req, res) => {
+  const { name, category, description, associatedPrompts, editableSettings, license, source, targetModule, previewUrl } = req.body || {};
+  if (!name || !category) {
+    return res.status(400).json({ success: false, error: 'Design name and category are required.' });
+  }
+  const design = createDesign({
+    name: String(name),
+    category,
+    description,
+    associatedPrompts,
+    editableSettings,
+    license,
+    source,
+    targetModule,
+    previewUrl,
+  });
+  return res.json({ success: true, design });
+});
+
+app.post('/api/designs/:id/favourite', (req, res) => {
+  const updated = toggleDesignFavourite(req.params.id);
+  if (!updated) return res.status(404).json({ success: false, error: 'Design not found.' });
+  return res.json({ success: true, design: updated });
+});
+
+app.get('/api/prompts', (_req, res) => {
+  const prompts = listPrompts();
+  res.json({ success: true, total: prompts.length, categories: PROMPT_26_CATEGORIES, prompts });
+});
+
+app.post('/api/prompts', (req, res) => {
+  const { title, description, category, promptTemplate, targetModule, provider, model, tags, is_public } = req.body || {};
+  if (!title || !category || !promptTemplate) {
+    return res.status(400).json({ success: false, error: 'Title, category, and promptTemplate are required.' });
+  }
+  const prompt = createPrompt({
+    title: String(title),
+    description: description ? String(description) : undefined,
+    category: String(category),
+    promptTemplate: String(promptTemplate),
+    targetModule,
+    provider,
+    model,
+    tags,
+    is_public: Boolean(is_public),
+  });
+  return res.json({ success: true, prompt });
+});
+
+app.post('/api/prompts/import', (req, res) => {
+  const { format, content, defaultCategory } = req.body || {};
+  if (!content || !['json', 'csv', 'txt'].includes(String(format))) {
+    return res.status(400).json({ success: false, error: 'Valid format (json, csv, txt) and content are required.' });
+  }
+  try {
+    const imported = importPromptsBatch(format, String(content), String(defaultCategory || 'AI Video Prompts'));
+    return res.json({ success: true, count: imported.length, prompts: imported });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err?.message || 'Prompt import failed.' });
+  }
+});
+
+app.put('/api/prompts/:id', (req, res) => {
+  const updated = updatePrompt(req.params.id, req.body || {});
+  if (!updated) return res.status(404).json({ success: false, error: 'Prompt not found.' });
+  return res.json({ success: true, prompt: updated });
+});
+
+app.post('/api/prompts/:id/duplicate', (req, res) => {
+  const copy = duplicatePrompt(req.params.id);
+  if (!copy) return res.status(404).json({ success: false, error: 'Prompt not found.' });
+  return res.json({ success: true, prompt: copy });
+});
+
+app.get('/api/prompts/:id/versions', (req, res) => {
+  return res.json({ success: true, versions: listPromptVersions(req.params.id) });
+});
+
+app.post('/api/prompts/:id/favourite', (req, res) => {
+  const updated = togglePromptFavourite(req.params.id);
+  if (!updated) return res.status(404).json({ success: false, error: 'Prompt not found.' });
+  return res.json({ success: true, prompt: updated });
+});
+
+app.post('/api/prompts/:id/use', (req, res) => {
+  const { provider, model } = req.body || {};
+  const updated = recordPromptUsage(req.params.id, provider, model);
+  if (!updated) return res.status(404).json({ success: false, error: 'Prompt not found.' });
+  return res.json({ success: true, prompt: updated });
+});
+
+app.get('/api/templates', (_req, res) => {
+  const templates = listTemplates();
+  res.json({ success: true, total: templates.length, templates });
+});
+
+// ============================================================================
+// Manhwa Studio — Complete Manhwa Library & Chapter System API
+// ============================================================================
+app.get('/api/manhwa/series', (req, res) => {
+  const tab = String(req.query.tab || 'all');
+  const q = String(req.query.q || '');
+  const series = listManhwaSeries({ tab, q });
+  res.json({ success: true, total: series.length, series });
+});
+
+app.post('/api/manhwa/series', (req, res) => {
+  const { title, description, cover_url, author, genre, language, art_style, status, visibility } = req.body || {};
+  if (!title || !String(title).trim()) {
+    return res.status(400).json({ success: false, error: 'Manhwa name is required.' });
+  }
+  const created = createManhwaSeries({
+    title: String(title),
+    description,
+    cover_url,
+    author,
+    genre,
+    language,
+    art_style,
+    status,
+    visibility,
+  });
+  res.status(201).json({ success: true, series: created });
+});
+
+app.get('/api/manhwa/series/:seriesId', (req, res) => {
+  const detail = getManhwaSeriesDetail(req.params.seriesId);
+  if (!detail) return res.status(404).json({ success: false, error: 'Manhwa series not found.' });
+  res.json({ success: true, ...detail });
+});
+
+app.put('/api/manhwa/series/:seriesId', (req, res) => {
+  const updated = updateManhwaSeries(req.params.seriesId, req.body || {});
+  if (!updated) return res.status(404).json({ success: false, error: 'Manhwa series not found.' });
+  res.json({ success: true, series: updated });
+});
+
+app.delete('/api/manhwa/series/:seriesId', (req, res) => {
+  const ok = deleteManhwaSeries(req.params.seriesId);
+  if (!ok) return res.status(404).json({ success: false, error: 'Manhwa series not found.' });
+  res.json({ success: true });
+});
+
+app.post('/api/manhwa/series/:seriesId/chapters', (req, res) => {
+  const { title, description, cover_url, status } = req.body || {};
+  const created = createManhwaChapter(req.params.seriesId, {
+    title: String(title || ''),
+    description,
+    cover_url,
+    status,
+  });
+  if (!created) return res.status(404).json({ success: false, error: 'Manhwa series not found.' });
+  res.status(201).json({ success: true, chapter: created });
+});
+
+app.put('/api/manhwa/series/:seriesId/chapters/reorder', (req, res) => {
+  const orderedIds = Array.isArray(req.body?.orderedChapterIds) ? req.body.orderedChapterIds : [];
+  const chapters = reorderManhwaChapters(req.params.seriesId, orderedIds);
+  res.json({ success: true, chapters });
+});
+
+app.get('/api/manhwa/chapters/:chapterId', (req, res) => {
+  const detail = getManhwaChapterDetail(req.params.chapterId);
+  if (!detail) return res.status(404).json({ success: false, error: 'Chapter not found.' });
+  res.json({ success: true, ...detail });
+});
+
+app.put('/api/manhwa/chapters/:chapterId', (req, res) => {
+  const updated = updateManhwaChapter(req.params.chapterId, req.body || {});
+  if (!updated) return res.status(404).json({ success: false, error: 'Chapter not found.' });
+  res.json({ success: true, chapter: updated });
+});
+
+app.delete('/api/manhwa/chapters/:chapterId', (req, res) => {
+  const ok = deleteManhwaChapter(req.params.chapterId);
+  if (!ok) return res.status(404).json({ success: false, error: 'Chapter not found.' });
+  res.json({ success: true });
+});
+
+app.post('/api/manhwa/chapters/:chapterId/pages', (req, res) => {
+  const pagesInput = Array.isArray(req.body?.pages) ? req.body.pages : [];
+  if (pagesInput.length === 0) {
+    return res.status(400).json({ success: false, error: 'At least one page image is required.' });
+  }
+  const created = addManhwaPages(req.params.chapterId, pagesInput);
+  if (!created) return res.status(404).json({ success: false, error: 'Chapter not found.' });
+  res.status(201).json({ success: true, pages: created });
+});
+
+app.delete('/api/manhwa/chapters/:chapterId/pages/:pageId', (req, res) => {
+  const ok = deleteManhwaPage(req.params.chapterId, req.params.pageId);
+  if (!ok) return res.status(404).json({ success: false, error: 'Page not found.' });
+  res.json({ success: true });
+});
+
+app.post('/api/manhwa/chapters/:chapterId/detect-panels', (req, res) => {
+  const panels = detectChapterPanels(req.params.chapterId);
+  if (!panels) return res.status(404).json({ success: false, error: 'Chapter not found.' });
+  res.json({ success: true, panels });
+});
+
+app.post('/api/manhwa/chapters/:chapterId/extract-characters', (req, res) => {
+  const characters = addOrExtractChapterCharacters(req.params.chapterId, req.body?.character);
+  if (!characters) return res.status(404).json({ success: false, error: 'Chapter not found.' });
+  res.json({ success: true, characters });
+});
+
+app.post('/api/manhwa/chapters/:chapterId/extract-dialogue', (req, res) => {
+  const dialogues = addOrExtractChapterDialogue(req.params.chapterId, req.body?.dialogue);
+  if (!dialogues) return res.status(404).json({ success: false, error: 'Chapter not found.' });
+  res.json({ success: true, dialogues });
+});
+
+app.post('/api/manhwa/chapters/:chapterId/generate-prompts', (req, res) => {
+  const scenePrompts = generateChapterScenePrompts(req.params.chapterId);
+  if (!scenePrompts) return res.status(404).json({ success: false, error: 'Chapter not found.' });
+  res.json({ success: true, scenePrompts });
+});
+
+app.post('/api/manhwa/chapters/:chapterId/video-jobs', (req, res) => {
+  const job = recordChapterVideoJob(req.params.chapterId, req.body || {});
+  if (!job) return res.status(404).json({ success: false, error: 'Chapter not found.' });
+  res.status(201).json({ success: true, job });
 });
 
 app.get('/robots.txt', (_req, res) => {

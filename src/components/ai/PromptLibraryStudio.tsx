@@ -20,6 +20,7 @@ import { PromptTemplate, StudioModule } from '../../types';
 import { PROMPT_LIBRARY_TEMPLATES } from '../../data/promptLibraryData';
 import { useStudioAi } from '../../context/StudioAiContext';
 import { soundFx } from '../../utils/audioSynth';
+import { DesignPromptHub } from './DesignPromptHub';
 
 interface PromptLibraryStudioProps {
   onNavigate: (module: StudioModule) => void;
@@ -35,6 +36,7 @@ export const PromptLibraryStudio: React.FC<PromptLibraryStudioProps> = ({ onNavi
     submitCustomPrompt 
   } = useStudioAi();
 
+  const [hubTab, setHubTab] = useState<'prompts' | 'designs' | 'templates' | 'classic'>('prompts');
   const [prompts, setPrompts] = useState<PromptTemplate[]>(PROMPT_LIBRARY_TEMPLATES);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState<string>('all');
@@ -92,8 +94,60 @@ export const PromptLibraryStudio: React.FC<PromptLibraryStudioProps> = ({ onNavi
     return match ? match.status : 'Pending';
   };
 
+  const renderHubSwitcher = () => (
+    <div className="px-6 py-2.5 border-b border-slate-800 bg-slate-900 flex flex-wrap items-center gap-2 shrink-0">
+      <button
+        type="button"
+        onClick={() => setHubTab('prompts')}
+        className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-colors ${
+          hubTab === 'prompts' ? 'bg-purple-600 text-white' : 'bg-slate-950 border border-slate-800 text-slate-300 hover:text-white'
+        }`}
+      >
+        Prompt Library (26 Categories · [VARIABLES])
+      </button>
+      <button
+        type="button"
+        onClick={() => setHubTab('designs')}
+        className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-colors ${
+          hubTab === 'designs' ? 'bg-amber-500 text-black' : 'bg-slate-950 border border-slate-800 text-slate-300 hover:text-white'
+        }`}
+      >
+        Design Library (11 Categories)
+      </button>
+      <button
+        type="button"
+        onClick={() => setHubTab('templates')}
+        className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-colors ${
+          hubTab === 'templates' ? 'bg-indigo-600 text-white' : 'bg-slate-950 border border-slate-800 text-slate-300 hover:text-white'
+        }`}
+      >
+        Template Library
+      </button>
+      <button
+        type="button"
+        onClick={() => setHubTab('classic')}
+        className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+          hubTab === 'classic' ? 'bg-emerald-600 text-white' : 'bg-slate-950 border border-slate-800 text-slate-300 hover:text-white'
+        }`}
+      >
+        Studio Queue & Classic Prompts
+      </button>
+    </div>
+  );
+
+  if (hubTab !== 'classic') {
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden bg-slate-950 text-slate-100">
+        {renderHubSwitcher()}
+        <DesignPromptHub activeTab={hubTab} onNavigate={onNavigate} />
+      </div>
+    );
+  }
+
   return (
-    <div className="flex-1 overflow-y-auto p-6 bg-slate-950 text-slate-100 space-y-6">
+    <div className="flex-1 flex flex-col overflow-hidden bg-slate-950 text-slate-100">
+      {renderHubSwitcher()}
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
       {/* Top Banner */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-4">
         <div>
@@ -317,6 +371,7 @@ export const PromptLibraryStudio: React.FC<PromptLibraryStudioProps> = ({ onNavi
             </div>
           );
         })}
+      </div>
       </div>
     </div>
   );
