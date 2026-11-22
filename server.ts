@@ -104,6 +104,7 @@ import {
   addReferenceAssetsToProject,
   removeReferenceAssetFromProject,
   runCartoonWorkflowStep,
+  parseCartoonChapters,
   updateCartoonScene,
   runQualityInspection,
   recomputeProjectSteps,
@@ -3250,6 +3251,15 @@ app.get('/api/cartoon-projects', (_req, res) => {
   res.json({ success: true, projects: listCartoonProjects() });
 });
 
+function synthesizeCartoonDialogue(text: string, language: string) {
+  const voice = CLOUD_TTS_VOICE_CATALOG.find((entry) => entry.language === language || entry.code === language);
+  return synthesizeSpeechAudio({
+    cleanText: text,
+    languageCode: voice?.code || 'kn-IN',
+    gender: 'Female',
+  });
+}
+
 app.post('/api/cartoon-projects', (req, res) => {
   try {
     const { name, projectType, animationStyle, aspectRatio, language, storyPrompt } = req.body || {};
@@ -3294,11 +3304,14 @@ app.post('/api/cartoon-projects/:id/az-step', async (req, res) => {
     const { azStepNumber, storyPrompt } = req.body || {};
     const stepNum = Number(azStepNumber);
     if (stepNum === 22) {
-      const rendered = await renderAndVerifyCartoonMp4(req.params.id);
+      const rendered = await renderAndVerifyCartoonMp4(req.params.id, synthesizeCartoonDialogue);
       if (rendered.renderJob?.verified) {
         syncCartoonProjectAssetsToLibrary(rendered);
       }
-      return res.json({ success: rendered.renderJob?.status !== 'failed', project: rendered });
+      if (rendered.renderJob?.status === 'failed') {
+        return res.status(500).json({ success: false, project: rendered, error: rendered.renderJob.errorMessage });
+      }
+      return res.json({ success: true, project: rendered });
     }
     const project = runAzWorkflowStep(req.params.id, stepNum, { storyPrompt });
     const syncedLibraryAssets = syncCartoonProjectAssetsToLibrary(project);
@@ -3371,9 +3384,14 @@ app.post('/api/cartoon-projects/:id/run-step', async (req, res) => {
     if (!existing) return res.status(404).json({ success: false, error: 'Project not found.' });
 
     let aiGeneratedStory: string | undefined;
-    if (Number(stepNumber) === 3 && ai) {
+    const promptSeed = String(storyPrompt || existing.storyPrompt || existing.name).trim();
+    const chapters = Number(stepNumber) === 3 ? parseCartoonChapters(promptSeed) : [];
+    if (chapters.length) {
+      aiGeneratedStory = chapters.map((chapter) =>
+        `${chapter.number}. ${chapter.title} — ${chapter.description}`
+      ).join('\n');
+    } else if (Number(stepNumber) === 3 && ai) {
       try {
-        const promptSeed = String(storyPrompt || existing.storyPrompt || existing.name).trim();
         const response = await ai.models.generateContent({
           model: 'gemini-4-hydrogen',
           contents: `Write a crisp 3-act animated cartoon film story outline (Act I, Act II, Act III, max 120 words) for:\nTitle: ${existing.name}\nStyle: ${existing.animationStyle}\nPrompt: ${promptSeed}`,
@@ -3465,7 +3483,7 @@ app.post('/api/cartoon-projects/:id/approve', (req, res) => {
 
 app.post('/api/cartoon-projects/:id/render', async (req, res) => {
   try {
-    const project = await renderAndVerifyCartoonMp4(req.params.id);
+    const project = await renderAndVerifyCartoonMp4(req.params.id, synthesizeCartoonDialogue);
     if (project.renderJob?.status === 'failed') {
       return res.status(500).json({
         success: false,

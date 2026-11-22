@@ -123,6 +123,7 @@ interface CartoonFilmProject {
   language: string;
   thumbnailUrl: string;
   chapterUrl?: string;
+  chapters?: string[];
   referenceImages?: ReferenceImageAsset[];
   storyPrompt: string;
   fullStory: string;
@@ -206,7 +207,6 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
   const [newType, setNewType] = useState<ProjectCategory>('Cartoon Film');
   const [newStyle, setNewStyle] = useState<string>('3D Stylized Cartoon');
   const [newAspect, setNewAspect] = useState<'16:9' | '9:16'>('16:9');
-  const [newPrompt, setNewPrompt] = useState<string>('');
 
   // Editable prompt & manual scene editor fields
   const [promptDraft, setPromptDraft] = useState<string>('');
@@ -222,7 +222,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
   const [isPreviewPlaying, setIsPreviewPlaying] = useState<boolean>(false);
   const [previewSceneIdx, setPreviewSceneIdx] = useState<number>(0);
   const [watchedAllScenesInSession, setWatchedAllScenesInSession] = useState<boolean>(false);
-  const previewTimerRef = useRef<number | null>(null);
+  const [chapterTitle, setChapterTitle] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Reference image upload & Manhwa URL import state
@@ -261,6 +261,10 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     if (activeProject) {
       setPromptDraft(activeProject.storyPrompt || '');
       setChapterUrlDraft(activeProject.chapterUrl || '');
+      setChapterTitle('');
+      setWatchedAllScenesInSession(false);
+      setIsPreviewPlaying(false);
+      setPreviewSceneIdx(0);
     }
   }, [activeProject?.id]);
 
@@ -313,7 +317,8 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
       if (data.project) {
         setProjects((prev) => prev.map((p) => (p.id === data.project.id ? data.project : p)));
       }
-      showToast('success', 'Project settings saved.');
+      if (patch.newChapterTitle) setChapterTitle('');
+      showToast('success', patch.newChapterTitle ? 'Chapter added.' : 'Project settings saved.');
     } catch (err: any) {
       showToast('error', err?.message || 'Could not update project.');
     } finally {
@@ -321,34 +326,61 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     }
   };
 
+  const previewScene = activeProject?.scenes[previewSceneIdx];
+
   useEffect(() => {
-    if (!isPreviewPlaying || !activeProject || activeProject.scenes.length === 0) {
-      if (previewTimerRef.current) {
-        window.clearInterval(previewTimerRef.current);
-        previewTimerRef.current = null;
-      }
-      return;
-    }
+    if (!isPreviewPlaying || !previewScene || activeStepNumber !== 12) return;
 
-    previewTimerRef.current = window.setInterval(() => {
-      setPreviewSceneIdx((prev) => {
-        const next = prev + 1;
-        if (next >= activeProject.scenes.length) {
-          setIsPreviewPlaying(false);
-          setWatchedAllScenesInSession(true);
-          return 0;
-        }
-        return next;
-      });
-    }, 1800);
-
-    return () => {
-      if (previewTimerRef.current) {
-        window.clearInterval(previewTimerRef.current);
-        previewTimerRef.current = null;
+    const speech = window.speechSynthesis;
+    const text = previewScene.dialogueText?.trim();
+    let speechFinished = !speech || !text;
+    let sceneTimeElapsed = false;
+    const advance = () => {
+      if (!speechFinished || !sceneTimeElapsed) return;
+      if (previewSceneIdx + 1 >= (activeProject?.scenes.length ?? 0)) {
+        setIsPreviewPlaying(false);
+        setWatchedAllScenesInSession(true);
+        setPreviewSceneIdx(0);
+      } else {
+        setPreviewSceneIdx(previewSceneIdx + 1);
       }
     };
-  }, [isPreviewPlaying, activeProject?.id, activeProject?.scenes.length]);
+    const timer = window.setTimeout(() => {
+      sceneTimeElapsed = true;
+      advance();
+    }, Math.max(2, previewScene.durationSec || 3) * 1000);
+
+    let utterance: SpeechSynthesisUtterance | undefined;
+    if (speech && text) {
+      const languageCodes: Record<string, string> = {
+        Kannada: 'kn-IN', English: 'en-US', Hindi: 'hi-IN', Tamil: 'ta-IN', Telugu: 'te-IN',
+      };
+      utterance = new SpeechSynthesisUtterance(text);
+      const language = activeProject?.language || 'Kannada';
+      utterance.lang = languageCodes[language] || language;
+      utterance.onend = () => {
+        speechFinished = true;
+        advance();
+      };
+      utterance.onerror = () => {
+        showToast('error', 'Preview voice unavailable for this browser or language.');
+        setIsPreviewPlaying(false);
+      };
+      speech.speak(utterance);
+    } else if (text) {
+      showToast('error', 'Preview voice is unavailable in this browser.');
+      setIsPreviewPlaying(false);
+    }
+
+    return () => {
+      window.clearTimeout(timer);
+      if (utterance) {
+        utterance.onend = null;
+        utterance.onerror = null;
+        speech.cancel();
+      }
+    };
+  }, [isPreviewPlaying, previewScene, previewSceneIdx, activeProject?.scenes.length, activeProject?.language, activeStepNumber]);
 
   const replaceProjectInState = (updated: CartoonFilmProject) => {
     setProjects((prev) => {
@@ -360,8 +392,9 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPrompt.trim()) {
-      showToast('error', 'Please enter a story prompt to create the project.');
+    const name = newName.trim();
+    if (!name) {
+      showToast('error', 'Please enter a project name.');
       return;
     }
     setBusyAction('creating');
@@ -371,11 +404,11 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: newName.trim() || `Project ${String(projects.length + 1).padStart(3, '0')} – ${newType}`,
+          name,
           projectType: newType,
           animationStyle: newStyle,
           aspectRatio: newAspect,
-          storyPrompt: newPrompt.trim(),
+          storyPrompt: `Create a story based on the project title "${name}".`,
         }),
       });
       const data = await res.json();
@@ -383,7 +416,6 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
       replaceProjectInState(data.project);
       setShowNewForm(false);
       setNewName('');
-      setNewPrompt('');
       setWorkspaceView('workflow');
       setActiveStepNumber(3);
       showToast('success', `Created "${data.project.name}". Ready to generate full story.`);
@@ -1095,7 +1127,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
         {showNewForm && (
           <form onSubmit={handleCreateProject} className={`p-5 rounded-2xl border space-y-4 ${cardSurface}`}>
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold">Step 1 &amp; 2 · Create New Cartoon / Manhwa Film Project</h2>
+              <h2 className="text-sm font-bold">Create New Cartoon / Manhwa Film Project</h2>
               <button
                 type="button"
                 onClick={() => setShowNewForm(false)}
@@ -1106,9 +1138,12 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
             </div>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
               <div className="md:col-span-2 space-y-1">
-                <label className="font-medium opacity-75">Project Name</label>
+                <label htmlFor="new-cartoon-project-name" className="font-medium opacity-75">Project Name</label>
                 <input
                   type="text"
+                  id="new-cartoon-project-name"
+                  required
+                  maxLength={120}
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder={`Project ${String(projects.length + 1).padStart(3, '0')} – Cartoon Adventure`}
@@ -1151,17 +1186,6 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                   <option value="2D Cel-Shaded Cartoon">2D Cel-Shaded Cartoon</option>
                   <option value="2D Cel Manhwa + Motion Parallax">2D Cel Manhwa + Motion Parallax</option>
                 </select>
-              </div>
-              <div className="md:col-span-3 space-y-1">
-                <label className="font-medium opacity-75">Story Prompt (Step 2)</label>
-                <input
-                  type="text"
-                  required
-                  value={newPrompt}
-                  onChange={(e) => setNewPrompt(e.target.value)}
-                  placeholder="Describe your cartoon film characters, setting, and adventure..."
-                  className={`w-full rounded-lg px-3 py-2 outline-none ${inputCls}`}
-                />
               </div>
             </div>
             <div className="flex justify-end gap-2">
@@ -1505,6 +1529,37 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                   ))}
                 </select>
               </div>
+
+              <section className="space-y-2 text-xs">
+                <h3 className="font-semibold">Chapters</h3>
+                <ul className="list-disc space-y-1 pl-5">
+                  {(activeProject.chapters ?? ['Chapter 1']).map((title, index) => (
+                    <li key={index} className="break-words">{title}</li>
+                  ))}
+                </ul>
+                <form
+                  className="flex flex-wrap gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (chapterTitle.trim() && !busyAction) {
+                      void handleUpdateProjectMeta({ newChapterTitle: chapterTitle.trim() });
+                    }
+                  }}
+                >
+                  <input
+                    aria-label="New chapter title"
+                    placeholder="New chapter title"
+                    value={chapterTitle}
+                    maxLength={120}
+                    onChange={(event) => setChapterTitle(event.target.value)}
+                    className={`min-w-0 flex-1 rounded-lg px-3 py-2 ${inputCls}`}
+                  />
+                  <button type="submit" disabled={!chapterTitle.trim() || Boolean(busyAction)}
+                    className="rounded-lg border border-current px-3 py-2 font-semibold disabled:opacity-50">
+                    Add Chapter
+                  </button>
+                </form>
+              </section>
 
               {/* Complete 17-Step Checklist */}
               <div className="space-y-1 max-h-[640px] overflow-y-auto pr-1">
@@ -2533,7 +2588,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              setWatchedAllScenesInSession(true);
+                              setWatchedAllScenesInSession(false);
                               setActiveStepNumber(12);
                               setPreviewSceneIdx(0);
                               setIsPreviewPlaying(true);
