@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { createHash } from 'node:crypto';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -172,6 +173,7 @@ export interface CartoonFilmProject {
   frameRate?: 24 | 25 | 30 | 60;
   thumbnailUrl: string;
   chapterUrl?: string;
+  chapters?: string[];
   referenceImages?: ReferenceImageAsset[];
   storyPrompt: string;
   fullStory: string;
@@ -222,7 +224,70 @@ const CARTOON_IMAGE_POOL = [
   '/src/assets/images/manhwa_panel_warrior_1794812531995.jpg',
   '/src/assets/images/manhwa_panel_temple_1794812532125.jpg',
   '/src/assets/images/manhwa_panel_clash_1794812531342.jpg',
+  '/src/assets/images/cartoon_forest_bg_1794980040735.jpg',
+  '/src/assets/images/cartoon_vfx_explosions_1794980039460.jpg',
+  '/src/assets/images/cinema_soundstage_set_1794406569758.jpg',
+  '/src/assets/images/manhwa_cover_crimson_lotus_1795002498343.jpg',
+  '/src/assets/images/manhwa_cover_skyline_revenant_1795002498039.jpg',
 ];
+
+function findSceneImage(url: string) {
+  const match = /^\/(api\/cartoon-assets|src\/assets\/images|assets\/images)\/([^/]+)$/.exec(url);
+  if (!match || match[2] === '.' || match[2] === '..' || match[2].includes('\\')) return undefined;
+  const roots = match[1] === 'api/cartoon-assets' ? [ASSETS_DIR] : match[1] === 'assets/images'
+    ? ['public/assets/images', 'src/assets/images']
+    : ['src/assets/images'];
+  for (const root of roots) {
+    const filePath = path.resolve(root, match[2]);
+    if (!fs.statSync(filePath, { throwIfNoEntry: false })?.isFile()) continue;
+    const digest = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+    return { filePath, digest };
+  }
+}
+
+function assignUniqueSceneImages(scenes: CartoonSceneItem[], referenceUrls: string[]) {
+  const assigned = new Set<string>();
+  const images = new Map([...new Set([...referenceUrls, ...scenes.map((scene) => scene.storyImageUrl), ...CARTOON_IMAGE_POOL])]
+    .filter(Boolean).map((url) => [url, findSceneImage(url)] as const));
+  const ordered = [...scenes].sort((a, b) => a.orderIndex - b.orderIndex);
+  const selections = new Map<string, string>();
+  const choose = (scene: CartoonSceneItem, candidates: string[]) => {
+    for (const url of candidates) {
+      const image = images.get(url);
+      if (!image || assigned.has(image.digest)) continue;
+      assigned.add(image.digest);
+      selections.set(scene.id, url);
+      return;
+    }
+  };
+  ordered.forEach((scene, index) => choose(scene, [referenceUrls[index], scene.storyImageUrl].filter(Boolean)));
+  for (const scene of ordered) {
+    if (!selections.has(scene.id)) choose(scene, [...referenceUrls, ...CARTOON_IMAGE_POOL]);
+  }
+  return scenes.map((scene): CartoonSceneItem => {
+    const url = selections.get(scene.id);
+    return {
+      ...scene,
+      storyImageUrl: url || '',
+      imageStatus: url ? 'ready' : 'failed',
+      lastError: url ? undefined : 'Upload another unique image for this scene.',
+    };
+  });
+}
+
+function requireUniqueSceneImages(scenes: CartoonSceneItem[]) {
+  const assigned = new Map<string, number>();
+  return scenes.map((scene) => {
+    const image = findSceneImage(scene.storyImageUrl);
+    if (!image) throw new Error(`Scene ${scene.sceneNumber} has no available image. Run Step 6 or upload a unique image.`);
+    const firstScene = assigned.get(image.digest);
+    if (firstScene !== undefined) {
+      throw new Error(`Scenes ${firstScene} and ${scene.sceneNumber} use the same image. Run Step 6 to replace duplicates.`);
+    }
+    assigned.set(image.digest, scene.sceneNumber);
+    return image.filePath;
+  });
+}
 
 function ensureDirs() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -1139,6 +1204,7 @@ export function createCartoonProject(input: {
     resolution: input.resolution || '1920x1080',
     frameRate: input.frameRate || 24,
     thumbnailUrl: thumb,
+    chapters: ['Chapter 1'],
     storyPrompt: String(input.storyPrompt || '').trim(),
     fullStory: '',
     characters: [],
@@ -1175,6 +1241,7 @@ export function updateCartoonProjectMeta(
   patch: {
     name?: string;
     movieTitle?: string;
+    newChapterTitle?: string;
     language?: string;
     animationStyle?: string;
     durationMinutes?: number;
@@ -1190,6 +1257,11 @@ export function updateCartoonProjectMeta(
 
   const p: CartoonFilmProject = JSON.parse(JSON.stringify(existing));
   if (patch.name !== undefined && patch.name.trim()) p.name = patch.name.trim().slice(0, 120);
+  if (patch.newChapterTitle !== undefined) {
+    const title = typeof patch.newChapterTitle === 'string' ? patch.newChapterTitle.trim() : '';
+    if (!title || title.length > 120) throw new Error('Enter a chapter title of 1 to 120 characters.');
+    p.chapters = [...(p.chapters ?? ['Chapter 1']), title];
+  }
   if (patch.movieTitle !== undefined) p.movieTitle = patch.movieTitle.trim().slice(0, 120);
   if (patch.language !== undefined) p.language = patch.language.trim();
   if (patch.animationStyle !== undefined) p.animationStyle = patch.animationStyle.trim();
@@ -1384,15 +1456,7 @@ export function addReferenceAssetsToProject(
 
   p.referenceImages = currentAssets;
   if (currentAssets.length > 0 && p.scenes.length > 0) {
-    p.scenes = p.scenes.map((sc, idx) =>
-      idx < currentAssets.length
-        ? {
-            ...sc,
-            storyImageUrl: currentAssets[idx].url,
-            imageStatus: 'ready',
-          }
-        : sc
-    );
+    p.scenes = assignUniqueSceneImages(p.scenes, currentAssets.map((asset) => asset.url));
     p.thumbnailUrl = currentAssets[0].url;
   } else if (currentAssets.length > 0 && !p.thumbnailUrl) {
     p.thumbnailUrl = currentAssets[0].url;
@@ -1425,6 +1489,22 @@ export function removeReferenceAssetFromProject(
   }
 
   return saveSingleProject(p);
+}
+
+export function parseCartoonChapters(story: string) {
+  const headings = [...story.matchAll(/(?:^|(?<=[\s.!?]))([1-9]\d?)\.\s+([^—\r\n]+?)\s+—\s+/gu)];
+  if (headings.length < 2 || headings.length > 25) return [];
+  const chapters = headings.map((heading, index) => {
+    const end = headings[index + 1]?.index ?? story.length;
+    return {
+      number: Number(heading[1]),
+      title: heading[2].trim(),
+      description: story.slice(heading.index + heading[0].length, end).trim(),
+    };
+  });
+  return chapters.every((chapter, index) =>
+    chapter.number === index + 1 && chapter.title && chapter.description
+  ) ? chapters : [];
 }
 
 export function runCartoonWorkflowStep(
@@ -1483,11 +1563,14 @@ export function runCartoonWorkflowStep(
     }
   }
 
+  const chapters = parseCartoonChapters(p.storyPrompt || '');
   const refUrls = (p.referenceImages || []).map((a) => a.url).filter(Boolean);
 
   if (targetStep === 5 || (!p.storyboardGenerated && targetStep > 5)) {
-    const count = Math.max(3, Math.min(12, Number(options?.sceneCount || p.scenes.length || refUrls.length || 4)));
-    if (p.scenes.length === 0) {
+    const count = chapters.length || Math.max(3, Math.min(25, Number(options?.sceneCount || p.scenes.length || refUrls.length || 4)));
+    if (chapters.length) p.chapters = chapters.map((chapter) => chapter.title);
+    if (p.scenes.length === 0 || (chapters.length > 0 && p.scenes.length < chapters.length)) {
+      const existingScenes = p.scenes;
       const framings: CartoonSceneItem['framing'][] = [
         'Wide Shot',
         'Medium Shot',
@@ -1498,19 +1581,23 @@ export function runCartoonWorkflowStep(
       const leadId = p.characters[0]?.id || 'char-1';
       p.scenes = Array.from({ length: count }, (_, idx) => {
         const scNum = idx + 1;
+        const chapter = chapters[idx];
+        const previous = existingScenes[idx];
+        if (previous && (!chapter || previous.title === chapter.title)) return previous;
+        const dialogue = chapter?.description || `Scene ${scNum} dialogue: Ready for action on beat ${scNum}!`;
         return {
           id: `${p.id}-sc-${scNum}`,
           sceneNumber: scNum,
           orderIndex: scNum,
-          title: `Scene ${scNum}: ${scNum === 1 ? 'Opening Horizon' : scNum === count ? 'Grand Finale' : `Sequence Beat ${scNum}`}`,
-          description: `${p.animationStyle} beat ${scNum} advancing "${(p.storyPrompt || p.name).slice(0, 90)}".`,
+          title: chapter?.title || `Scene ${scNum}: ${scNum === 1 ? 'Opening Horizon' : scNum === count ? 'Grand Finale' : `Sequence Beat ${scNum}`}`,
+          description: chapter?.description || `${p.animationStyle} beat ${scNum} advancing "${(p.storyPrompt || p.name).slice(0, 90)}".`,
           framing: framings[idx % framings.length],
           characterIds: [leadId],
           characterSeedUsed: p.characters[0]?.consistencySeed || baseSeed,
-          storyImageUrl: refUrls[idx % refUrls.length] || CARTOON_IMAGE_POOL[idx % CARTOON_IMAGE_POOL.length],
+          storyImageUrl: refUrls[idx] || CARTOON_IMAGE_POOL[idx] || '',
           imageStatus: 'pending',
           videoClipStatus: 'pending',
-          dialogueText: `Scene ${scNum} dialogue: Ready for action on beat ${scNum}!`,
+          dialogueText: dialogue,
           dialogueAudioStatus: 'pending',
           musicSfxPreset: scNum === count ? 'Triumphant Finale Score' : 'Upbeat Cartoon Underscore',
           musicSfxStatus: 'pending',
@@ -1518,12 +1605,13 @@ export function runCartoonWorkflowStep(
           vfxStatus: 'pending',
           syncOffsetMs: 0,
           syncStatus: 'pending',
-          subtitleText: `Scene ${scNum} dialogue: Ready for action on beat ${scNum}!`,
+          subtitleText: dialogue,
           subtitleStatus: 'pending',
           durationSec: 4,
         };
       });
     }
+    p.scenes = assignUniqueSceneImages(p.scenes, refUrls);
     p.storyboardGenerated = true;
   }
 
@@ -1534,27 +1622,11 @@ export function runCartoonWorkflowStep(
   };
 
   if (targetStep === 6) {
-    p.scenes = p.scenes.map((sc, idx) =>
-      shouldTouchScene(sc, sc.imageStatus !== 'ready')
-        ? {
-            ...sc,
-            storyImageUrl: refUrls[idx] || sc.storyImageUrl || CARTOON_IMAGE_POOL[idx % CARTOON_IMAGE_POOL.length],
-            imageStatus: 'ready',
-            characterSeedUsed: p.characters[0]?.consistencySeed || sc.characterSeedUsed,
-            lastError: undefined,
-          }
-        : sc
-    );
+    p.scenes = assignUniqueSceneImages(p.scenes, refUrls);
   } else if (targetStep === 7) {
-    p.scenes = p.scenes.map((sc, idx) =>
+    p.scenes = assignUniqueSceneImages(p.scenes, refUrls).map((sc) =>
       shouldTouchScene(sc, sc.videoClipStatus === 'failed' || sc.videoClipStatus === 'corrupted')
-        ? {
-            ...sc,
-            storyImageUrl: sc.storyImageUrl || CARTOON_IMAGE_POOL[idx % CARTOON_IMAGE_POOL.length],
-            imageStatus: 'ready',
-            videoClipStatus: 'ready',
-            lastError: undefined,
-          }
+        ? { ...sc, videoClipStatus: sc.imageStatus === 'ready' ? 'ready' : 'failed' }
         : sc
     );
   } else if (targetStep === 8) {
@@ -1592,6 +1664,7 @@ export function runCartoonWorkflowStep(
         : sc
     );
   } else if (targetStep === 12) {
+    requireUniqueSceneImages(p.scenes);
     p.previewGenerated = true;
     // IMPORTANT: Preview is NEVER final confirmation!
     p.previewStatus = 'preview_ready_editing_required';
@@ -1729,14 +1802,12 @@ export function resolveCartoonQualityIssue(
       if (issue.category === 'character_consistency') {
         sc.characterSeedUsed = leadSeed;
         sc.imageStatus = 'ready';
-      } else if (issue.category === 'missing_media') {
-        sc.storyImageUrl = sc.storyImageUrl || CARTOON_IMAGE_POOL[scIdx % CARTOON_IMAGE_POOL.length];
-        sc.imageStatus = 'ready';
-      } else if (issue.category === 'corrupted_video') {
-        sc.imageStatus = 'ready';
-        sc.storyImageUrl = sc.storyImageUrl || CARTOON_IMAGE_POOL[scIdx % CARTOON_IMAGE_POOL.length];
-        sc.videoClipStatus = 'ready';
-        sc.lastError = undefined;
+      } else if (issue.category === 'missing_media' || issue.category === 'corrupted_video') {
+        p.scenes = assignUniqueSceneImages(p.scenes, (p.referenceImages || []).map((asset) => asset.url));
+        const repaired = p.scenes[scIdx];
+        if (issue.category === 'corrupted_video') {
+          repaired.videoClipStatus = repaired.imageStatus === 'ready' ? 'ready' : 'failed';
+        }
       } else if (issue.category === 'missing_audio') {
         sc.dialogueText = sc.dialogueText?.trim() || `Scene ${sc.sceneNumber}: Voice dialogue synchronized.`;
         sc.dialogueAudioStatus = 'ready';
@@ -1827,10 +1898,13 @@ export function confirmFinalProjectApproval(
   return saveSingleProject(p);
 }
 
-/**
- * Step 16 & 17: Real server-side MP4 render using FFmpeg + FFprobe file verification!
- */
-export async function renderAndVerifyCartoonMp4(projectId: string): Promise<CartoonFilmProject> {
+const activeCartoonRenders = new Set<string>();
+
+/** Render the approved film with synchronized scene dialogue. */
+export async function renderAndVerifyCartoonMp4(
+  projectId: string,
+  synthesizeDialogue: (text: string, language: string) => Promise<{ audioBuffer: Buffer; mimeType: string } | null>
+): Promise<CartoonFilmProject> {
   const existing = getCartoonProject(projectId);
   if (!existing) throw new Error('Cartoon project not found.');
   if (!existing.finalApprovalConfirmed) {
@@ -1840,45 +1914,68 @@ export async function renderAndVerifyCartoonMp4(projectId: string): Promise<Cart
   ensureDirs();
   const safeBase = existing.id.replace(/[^a-zA-Z0-9_-]/g, '_');
   const outMp4Path = path.join(RENDER_DIR, `${safeBase}.mp4`);
-  const concatListPath = path.join(RENDER_DIR, `${safeBase}_concat.txt`);
-
-  // Resolve real on-disk scene image paths (including uploaded .data/cartoon-assets)
-  const fallbackImg = path.resolve(process.cwd(), 'src/assets/images/cartoon_adventure_thumb_1794924309261.jpg');
-  const sceneFiles = (existing.scenes || []).map((sc) => {
-    const rawUrl = String(sc.storyImageUrl || '');
-    let resolved = '';
-    if (rawUrl.startsWith('/api/cartoon-assets/')) {
-      resolved = path.join(ASSETS_DIR, path.basename(rawUrl));
-    } else {
-      const cleanRel = rawUrl.replace(/^\/+/, '');
-      resolved = path.resolve(process.cwd(), cleanRel);
-    }
-    return {
-      filePath: resolved && fs.existsSync(resolved) ? resolved : fallbackImg,
-      durationSec: Math.max(2, Math.min(6, Number(sc.durationSec || 3))),
-    };
-  });
-
-  if (sceneFiles.length === 0) {
-    sceneFiles.push({ filePath: fallbackImg, durationSec: 4 });
-  }
-
-  const concatBody =
-    sceneFiles
-      .map((item) => `file '${item.filePath.replace(/'/g, "'\\''")}'\nduration ${item.durationSec}`)
-      .join('\n') +
-    `\nfile '${sceneFiles[sceneFiles.length - 1].filePath.replace(/'/g, "'\\''")}'\n`;
-
-  fs.writeFileSync(concatListPath, concatBody, 'utf8');
-
-  const totalSec = sceneFiles.reduce((sum, s) => sum + s.durationSec, 0);
-  const scaleFilter =
-    existing.aspectRatio === '9:16'
-      ? 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p'
-      : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p';
-
+  if (activeCartoonRenders.has(projectId)) throw new Error('This film is already rendering.');
+  const tempDir = fs.mkdtempSync(path.join(RENDER_DIR, 'cartoon-render-'));
+  const concatListPath = path.join(tempDir, 'images.txt');
+  const audioPath = path.join(tempDir, 'dialogue.pcm');
+  const tempMp4Path = path.join(tempDir, 'film.mp4');
+  activeCartoonRenders.add(projectId);
   try {
+    const scenes = [...existing.scenes].sort((a, b) => a.orderIndex - b.orderIndex);
+    const sampleRate = 48000;
+    const sceneFiles: { filePath: string; durationSec: number }[] = [];
+    fs.writeFileSync(audioPath, Buffer.alloc(0));
+    const imagePaths = requireUniqueSceneImages(scenes);
+    for (const [index, sc] of scenes.entries()) {
+      const dialogue = sc.dialogueText?.trim();
+      let pcm = Buffer.alloc(0);
+      if (dialogue) {
+        const speech = await synthesizeDialogue(dialogue, existing.language);
+        if (!speech?.audioBuffer.length) {
+          throw new Error(`Scene ${sc.sceneNumber}: dialogue audio could not be generated. Check the studio voice provider and retry.`);
+        }
+        const voicePath = path.join(tempDir, 'voice');
+        const pcmPath = path.join(tempDir, 'voice.pcm');
+        fs.writeFileSync(voicePath, speech.audioBuffer);
+        const pcmRate = speech.mimeType.match(/rate=(\d+)/i)?.[1] || '24000';
+        const inputOptions = /audio\/(?:l16|pcm)/i.test(speech.mimeType)
+          ? ['-f', 's16le', '-ar', pcmRate, '-ac', '1']
+          : [];
+        await execFileAsync('ffmpeg', [
+          '-v', 'error', '-y', ...inputOptions, '-i', voicePath,
+          '-vn', '-ac', '1', '-ar', String(sampleRate), '-f', 's16le', pcmPath,
+        ], { timeout: 30000 });
+        pcm = fs.readFileSync(pcmPath);
+        if (!pcm.some((byte) => byte !== 0)) throw new Error(`Scene ${sc.sceneNumber}: the voice provider returned silent audio.`);
+      }
+      const sceneDuration = Math.max(2, Math.min(180, Number(sc.durationSec) || 3));
+      const durationSec = Math.ceil(Math.max(sceneDuration, pcm.length / (sampleRate * 2)) * 25) / 25;
+      fs.appendFileSync(audioPath, pcm);
+      fs.appendFileSync(audioPath, Buffer.alloc(Math.round(durationSec * sampleRate) * 2 - pcm.length));
+      sceneFiles.push({
+        filePath: imagePaths[index],
+        durationSec,
+      });
+    }
+
+    if (sceneFiles.length === 0) throw new Error('Add scenes before rendering the film.');
+
+    const concatBody =
+      sceneFiles
+        .map((item) => `file '${item.filePath.replace(/'/g, "'\\''")}'\nduration ${item.durationSec}`)
+        .join('\n') +
+      `\nfile '${sceneFiles[sceneFiles.length - 1].filePath.replace(/'/g, "'\\''")}'\n`;
+
+    fs.writeFileSync(concatListPath, concatBody, 'utf8');
+
+    const totalSec = sceneFiles.reduce((sum, s) => sum + s.durationSec, 0);
+    const scaleFilter =
+      existing.aspectRatio === '9:16'
+        ? 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p'
+        : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p';
+
     await execFileAsync('ffmpeg', [
+      '-v', 'error',
       '-y',
       '-f',
       'concat',
@@ -1886,33 +1983,28 @@ export async function renderAndVerifyCartoonMp4(projectId: string): Promise<Cart
       '0',
       '-i',
       concatListPath,
-      '-f',
-      'lavfi',
-      '-t',
-      String(totalSec),
-      '-i',
-      'anullsrc=channel_layout=stereo:sample_rate=44100',
+      '-f', 's16le', '-ar', String(sampleRate), '-ac', '1',
+      '-i', audioPath,
+      '-map', '0:v:0', '-map', '1:a:0',
+      '-t', String(totalSec),
       '-vf',
-      scaleFilter,
+      `${scaleFilter},fps=24,tpad=stop_mode=clone:stop_duration=1`,
       '-c:v',
       'libx264',
       '-preset',
       'ultrafast',
-      '-r',
-      '24',
       '-c:a',
       'aac',
-      '-shortest',
       '-movflags',
       '+faststart',
-      outMp4Path,
+      tempMp4Path,
     ]);
 
     // Verify rendered file via fs.statSync + ffprobe
-    if (!fs.existsSync(outMp4Path)) {
+    if (!fs.existsSync(tempMp4Path)) {
       throw new Error('Rendered MP4 file was not created on disk.');
     }
-    const stats = fs.statSync(outMp4Path);
+    const stats = fs.statSync(tempMp4Path);
     if (stats.size < 2048) {
       throw new Error('Rendered MP4 file verification failed (output too small).');
     }
@@ -1924,12 +2016,15 @@ export async function renderAndVerifyCartoonMp4(projectId: string): Promise<Cart
       'format=duration',
       '-of',
       'default=noprint_wrappers=1:nokey=1',
-      outMp4Path,
+      tempMp4Path,
     ]);
     const verifiedDuration = Number.parseFloat(String(probeOut || totalSec).trim()) || totalSec;
 
+    const latest = getCartoonProject(projectId);
+    if (!latest) throw new Error('Cartoon project was deleted during rendering.');
+    fs.renameSync(tempMp4Path, outMp4Path);
     const p: CartoonFilmProject = {
-      ...existing,
+      ...latest,
       renderJob: {
         status: 'completed',
         progress: 100,
@@ -1942,8 +2037,10 @@ export async function renderAndVerifyCartoonMp4(projectId: string): Promise<Cart
     };
     return saveSingleProject(p);
   } catch (err: any) {
+    const latest = getCartoonProject(projectId);
+    if (!latest) throw err;
     const failedProject: CartoonFilmProject = {
-      ...existing,
+      ...latest,
       renderJob: {
         status: 'failed',
         progress: 0,
@@ -1952,6 +2049,9 @@ export async function renderAndVerifyCartoonMp4(projectId: string): Promise<Cart
       },
     };
     return saveSingleProject(failedProject);
+  } finally {
+    activeCartoonRenders.delete(projectId);
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
