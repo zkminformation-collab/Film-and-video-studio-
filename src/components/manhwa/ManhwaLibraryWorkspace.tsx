@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import type { ManhwaPanelItem } from './ManhwaStudio';
 import { soundFx } from '../../utils/audioSynth';
+import { ManhwaReleasePlan } from './ManhwaReleasePlan';
 
 export interface ManhwaSeriesSummary {
   id: string;
@@ -302,18 +303,20 @@ export const ManhwaLibraryWorkspace: React.FC<ManhwaLibraryWorkspaceProps> = ({
     }
   };
 
-  const openCreateSeriesModal = () => {
+  const openCreateSeriesModal = (aboveTenThousandPeople = false) => {
     setEditingSeriesId(null);
     setSeriesForm({
-      title: '',
-      description: '',
+      title: aboveTenThousandPeople ? 'Above Ten Thousand People' : '',
+      description: aboveTenThousandPeople
+        ? 'Also known as Above Myriads (万人之上). Add authorized chapter files before production.'
+        : '',
       cover_url: PRESET_COVERS[0].url,
-      author: 'Studio Creator',
+      author: aboveTenThousandPeople ? 'Bo Yi Chuang Wei Dongman' : 'Studio Creator',
       genre: 'Action, Fantasy',
       language: 'English',
       art_style: 'Dark Fantasy Webtoon',
       status: 'Ongoing',
-      visibility: 'Public',
+      visibility: aboveTenThousandPeople ? 'Private' : 'Public',
     });
     setShowSeriesModal(true);
   };
@@ -693,7 +696,14 @@ export const ManhwaLibraryWorkspace: React.FC<ManhwaLibraryWorkspaceProps> = ({
               </div>
               <button
                 type="button"
-                onClick={openCreateSeriesModal}
+                onClick={() => openCreateSeriesModal(true)}
+                className="px-3 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-200 shrink-0"
+              >
+                Above Ten Thousand People
+              </button>
+              <button
+                type="button"
+                onClick={() => openCreateSeriesModal()}
                 className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -713,7 +723,7 @@ export const ManhwaLibraryWorkspace: React.FC<ManhwaLibraryWorkspaceProps> = ({
                 </p>
                 <button
                   type="button"
-                  onClick={openCreateSeriesModal}
+                  onClick={() => openCreateSeriesModal()}
                   className="px-4 py-2 rounded-lg bg-amber-500 text-black text-xs font-bold"
                 >
                   Create New Manhwa
@@ -873,6 +883,12 @@ export const ManhwaLibraryWorkspace: React.FC<ManhwaLibraryWorkspaceProps> = ({
                 </div>
               </div>
             </div>
+
+            <ManhwaReleasePlan
+              key={activeSeries.id}
+              seriesTitle={activeSeries.title}
+              chapters={chaptersList}
+            />
 
             {/* Chapters List */}
             <div className="space-y-3">
