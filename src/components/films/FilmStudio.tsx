@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { FilmProject } from '../../types';
 import { soundFx } from '../../utils/audioSynth';
+import { BuiltinProductionLibrary } from '../media/BuiltinProductionLibrary';
 
 interface FilmStudioProps {
   activeFilm: FilmProject;
@@ -83,6 +84,7 @@ export const FilmStudio: React.FC<FilmStudioProps> = ({ activeFilm, onDeleteFilm
 
   return (
     <div className="flex-1 overflow-y-auto p-6 bg-slate-950 text-slate-100 space-y-6">
+      <BuiltinProductionLibrary title="Film production templates" folders={['Film Production']} />
       {/* Top Section: Header & Quick Stats */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
         <div>

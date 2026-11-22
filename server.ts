@@ -7,6 +7,9 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { builtinProductionAssets } from './src/data/builtinProductionAssets';
+import { productionAssetVariant, variantsPerAsset } from './src/data/productionAssetVariants';
+import { renderProductionVariant } from './server/productionAssetVariants';
 import type { SocialPlatform } from './server/socialMediaStore.ts';
 import {
   buildOAuthAuthorizeUrl,
@@ -4423,6 +4426,23 @@ app.post('/api/iconscout/download', async (req, res) => {
 // ============================================================================
 // STEP 5: UNIFIED FREE ASSET LIBRARY API (Folders, Licensing & Import)
 // ============================================================================
+app.get('/api/production-pack/:family/:file', (req, res) => {
+  const base = builtinProductionAssets.find((asset) => asset.slug === req.params.family);
+  const match = /^(\d{1,3})\.(svg|wav|csv)$/.exec(req.params.file);
+  const index = match ? Number(match[1]) : 0;
+  if (!base || !match || index < 1 || index > variantsPerAsset) return res.sendStatus(404);
+  const asset = productionAssetVariant(base, index);
+  if (asset.format.toLowerCase() !== match[2]) return res.sendStatus(404);
+
+  try {
+    const payload = renderProductionVariant(asset);
+    res.set('Cache-Control', 'public, max-age=86400');
+    return res.type(match[2]).send(payload);
+  } catch {
+    return res.sendStatus(503);
+  }
+});
+
 app.get('/api/free-assets', (req, res) => {
   const folder = String(req.query.folder || '').trim();
   const subfolder = String(req.query.subfolder || '').trim();

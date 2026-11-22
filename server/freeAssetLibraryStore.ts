@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { builtinProductionAssets } from '../src/data/builtinProductionAssets';
 
 export type FreeAssetFolder =
   | 'Animation'
@@ -30,12 +31,13 @@ export interface FreeAssetRecord {
   description: string;
   tags: string[];
   projectId: string;
+  durationSec?: number;
   customImported?: boolean;
 }
 
 export const FREE_ASSET_FOLDER_TREE: Record<FreeAssetFolder, string[]> = {
   Animation: ['Lottie JSON', '2D Animation', '3D Animation', 'Character Animation', 'Motion Graphics'],
-  VFX: ['Fire', 'Smoke', 'Explosions', 'Lightning', 'Magic', 'Particles', 'Transitions'],
+  VFX: ['Fire', 'Smoke', 'Explosions', 'Lightning', 'Magic', 'Particles', 'Transitions', 'Lens Effects'],
   '3D Assets': ['Characters', 'Buildings', 'Vehicles', 'Props', 'Models', 'HDRI'],
   Images: ['Backgrounds', 'Environments', 'Textures'],
   Audio: ['Music', 'Sound Effects', 'Footsteps', 'Nature', 'Cinematic Sounds'],
@@ -855,7 +857,21 @@ function ensureCustomStore(): FreeAssetRecord[] {
 
 export function listFreeAssets(): FreeAssetRecord[] {
   const custom = ensureCustomStore();
-  return [...custom, ...SEED_FREE_ASSETS];
+  const builtins: FreeAssetRecord[] = builtinProductionAssets.map((asset) => ({
+    ...asset,
+    source: 'ZKMAP Built-in',
+    sourceUrl: asset.url,
+    downloadUrl: asset.url,
+    previewUrl: asset.format === 'CSV' ? '' : asset.url,
+    previewType: asset.format === 'WAV' ? 'audio' : asset.format === 'WebM' ? 'video' : asset.format === 'SVG' ? 'image' : 'tool',
+    license: 'CC0',
+    commercialUse: 'Yes',
+    licenseNote: 'Original procedural ZKMAP asset. Use, adapt, and redistribute freely.',
+    description: `${asset.name} · ${asset.subfolder}`,
+    tags: [asset.folder, asset.subfolder, asset.format],
+    projectId: 'all',
+  }));
+  return [...custom, ...builtins, ...SEED_FREE_ASSETS];
 }
 
 export function importFreeAsset(input: {
@@ -953,7 +969,7 @@ export function listEnrichedStudioAssets(): EnrichedStudioAsset[] {
   return listFreeAssets().map((a) => {
     const licUpper = a.license.toUpperCase();
     const isMitOrCc0 = licUpper.includes('CC0') || licUpper === 'MIT' || licUpper.startsWith('MIT ');
-    const isIncludedInZip = a.source === 'useAnimations';
+    const isIncludedInZip = a.source === 'useAnimations' || a.source === 'ZKMAP Built-in';
     const redistributionAllowed: CommercialUseStatus = isMitOrCc0
       ? 'Yes'
       : a.source.toLowerCase().includes('mixkit')
@@ -1007,7 +1023,7 @@ export function generateDownloadLinksCsv(assets: EnrichedStudioAsset[]): string 
       a.subfolder,
       a.format,
       a.source,
-      a.packageStatus === 'included_in_zip' ? 'Included in ZIP (MIT)' : 'Official Source Link',
+      a.packageStatus === 'included_in_zip' ? 'Included in ZIP' : 'Official Source Link',
       a.sourceUrl,
       a.downloadUrl,
       a.projectId,
@@ -1076,6 +1092,12 @@ export async function buildCompleteStudioLibraryZip(): Promise<Buffer> {
   const zip = new JSZip();
   const root = zip.folder('Film-Video-Studio-Complete-Library')!;
   const assets = listEnrichedStudioAssets();
+  for (const asset of builtinProductionAssets) {
+    const file = path.basename(asset.url);
+    const bytes = fs.readFileSync(path.join(process.cwd(), 'public', 'assets', 'production-pack', file));
+    const entry = assets.find((record) => record.assetId === asset.assetId);
+    if (entry) root.file(`${entry.zipFolderPath}/${file}`, bytes);
+  }
 
   // Create exact 01-09 folder hierarchy and place official-source README manifests inside each
   for (const relPath of COMPLETE_LIBRARY_FOLDERS) {

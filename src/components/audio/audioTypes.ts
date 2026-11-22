@@ -27,6 +27,7 @@ export interface AudioTimelineClip {
   durationSec: number;
   color: string;
   sourceAssetId?: string;
+  sourceUrl?: string;
   soundMethod?: string;
   dialogueText?: string;
   voiceProfileId?: string;

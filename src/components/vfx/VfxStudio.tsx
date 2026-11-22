@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { FilmProject } from '../../types';
 import { soundFx } from '../../utils/audioSynth';
+import { BuiltinProductionLibrary } from '../media/BuiltinProductionLibrary';
+import sciFiPlate from '../../assets/images/cinema_sci_fi_scene_1794406566762.jpg';
 
 interface VfxStudioProps {
   activeFilm: FilmProject;
@@ -40,7 +42,7 @@ export const VfxStudio: React.FC<VfxStudioProps> = ({ activeFilm }) => {
     if (!ctx) return;
 
     const img = new Image();
-    img.src = '/src/assets/images/cinema_sci_fi_scene_1794406566762.jpg';
+    img.src = sciFiPlate;
 
     let grainPhase = 0;
 
@@ -66,7 +68,7 @@ export const VfxStudio: React.FC<VfxStudioProps> = ({ activeFilm }) => {
       }
 
       // Draw main plate image
-      if (img.complete) {
+      if (img.naturalWidth > 0) {
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       }
 
@@ -168,7 +170,8 @@ export const VfxStudio: React.FC<VfxStudioProps> = ({ activeFilm }) => {
   return (
     <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-slate-950 text-slate-100">
       {/* Main VFX Compositor Viewport */}
-      <div className="flex-1 flex flex-col items-center justify-center p-6 bg-slate-950 select-none">
+      <div className="flex-1 flex flex-col items-center gap-4 overflow-y-auto p-6 bg-slate-950">
+        <BuiltinProductionLibrary title="VFX overlay library" folders={['VFX']} />
         {/* Canvas Display */}
         <div className="relative border-2 border-slate-800 rounded-xl overflow-hidden shadow-2xl bg-black">
           <canvas
