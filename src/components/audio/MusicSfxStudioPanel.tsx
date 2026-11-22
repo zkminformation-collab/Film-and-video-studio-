@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import { useStudioAi } from '../../context/StudioAiContext';
 import { soundFx } from '../../utils/audioSynth';
+import { BuiltinProductionLibrary } from '../media/BuiltinProductionLibrary';
+import type { BuiltinProductionAsset } from '../../data/builtinProductionAssets';
 
 interface StudioAudioAssetRecord {
   assetId: string;
@@ -240,6 +242,7 @@ export const MusicSfxStudioPanel: React.FC = () => {
       id: `aclip-${asset.assetId}-${Date.now()}`,
       trackRole: role,
       name: asset.title,
+      sourceUrl: asset.filePath,
       startSec: Math.min(40, nextStart),
       durationSec: Math.min(18, Math.max(3, asset.durationSec)),
       color: asset.assetType === 'music' ? '#8b5cf6' : '#f59e0b',
@@ -257,6 +260,18 @@ export const MusicSfxStudioPanel: React.FC = () => {
     notify(
       `Placed "${asset.title}" on Timeline Track ${asset.assetType === 'music' ? 'A2 (Background Music)' : 'A3 (Sound Effects)'}!`
     );
+  };
+
+  const addBuiltInAudio = (asset: BuiltinProductionAsset) => {
+    if (!asset.durationSec) return;
+    const role = asset.subfolder === 'Music' ? 'music' : 'sfx';
+    const end = audioClips.filter((clip) => clip.trackRole === role)
+      .reduce((latest, clip) => Math.max(latest, clip.startSec + clip.durationSec), 0);
+    addAudioClip({
+      id: crypto.randomUUID(), trackRole: role, name: asset.name, sourceUrl: asset.url,
+      startSec: Math.min(45 - asset.durationSec, end), durationSec: asset.durationSec,
+      color: role === 'music' ? '#8b5cf6' : '#f59e0b',
+    });
   };
 
   const handleDeleteAsset = async (assetId: string) => {
@@ -332,6 +347,7 @@ export const MusicSfxStudioPanel: React.FC = () => {
       )}
 
       {/* TAB 1: MUSIC STUDIO */}
+      {activeMode === 'music' && <BuiltinProductionLibrary title="Music and audio library" folders={['Audio']} onAdd={addBuiltInAudio} />}
       {activeMode === 'music' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 space-y-3">
@@ -426,6 +442,7 @@ export const MusicSfxStudioPanel: React.FC = () => {
       )}
 
       {/* TAB 2: SOUND EFFECTS (SFX) STUDIO */}
+      {activeMode === 'sfx' && <BuiltinProductionLibrary title="Sound effects library" folders={['Audio']} soundOnly onAdd={addBuiltInAudio} />}
       {activeMode === 'sfx' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 space-y-3">

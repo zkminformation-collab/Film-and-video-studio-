@@ -39,6 +39,37 @@ import { INITIAL_TIMELINE_CLIPS } from '../../data/initialData';
 import { soundFx } from '../../utils/audioSynth';
 import { useStudioAi } from '../../context/StudioAiContext';
 import { handleImageError } from '../../utils/imageUtils';
+import { BuiltinProductionLibrary } from '../media/BuiltinProductionLibrary';
+import { builtinProductionAssets, type BuiltinProductionAsset } from '../../data/builtinProductionAssets';
+
+const isPackMedia = (clip?: TimelineClip) => {
+  const url = clip?.assetUrl ?? '';
+  return url.startsWith('/assets/production-pack/') || (url.startsWith('/api/production-pack/') && url.endsWith('.wav'));
+};
+
+function PackTimelineMedia({ clip, time, playing, opacity }: { clip: TimelineClip; time: number; playing: boolean; opacity?: number }) {
+  const element = useRef<HTMLMediaElement | null>(null);
+  const [failed, setFailed] = useState(false);
+  const sync = () => {
+    const media = element.current;
+    if (!media || media.readyState === 0) return;
+    const rate = clip.speed || 1;
+    const offset = (clip.sourceOffset ?? 0) + Math.max(0, time - clip.start) * rate;
+    media.playbackRate = rate;
+    media.volume = Math.max(0, Math.min(1, clip.volume ?? 1));
+    if (Math.abs(media.currentTime - offset) > (playing ? .2 : .02)) media.currentTime = Math.min(offset, media.duration);
+    if (playing && offset < media.duration) {
+      if (media.paused) void media.play().catch((error: DOMException) => {
+        if (error.name !== 'AbortError' && element.current === media) setFailed(true);
+      });
+    } else media.pause();
+  };
+  useEffect(sync, [time, playing, clip]);
+  if (failed) return <span role="status" className="absolute left-2 top-2 z-10 rounded bg-slate-950 p-2 text-xs">Unable to play {clip.name}</span>;
+  if (clip.type === 'audio') return <audio ref={(node) => { element.current = node; }} src={clip.assetUrl} onLoadedMetadata={sync} onError={() => setFailed(true)} />;
+  return <video ref={(node) => { element.current = node; }} src={clip.assetUrl} onLoadedMetadata={sync} onError={() => setFailed(true)}
+    muted playsInline className="pointer-events-none absolute inset-0 h-full w-full object-cover" style={{ opacity }} />;
+}
 
 interface VideoEditorProps {
   activeFilm: FilmProject;
@@ -60,6 +91,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
   const { wallet, requestCostApproval, addQueueItem, queuedEditorClips, consumeQueuedEditorClips } = useStudioAi();
 
   const [clips, setClips] = useState<TimelineClip[]>(INITIAL_TIMELINE_CLIPS);
+  const hasPackAudio = clips.some((clip) => clip.type === 'audio' && isPackMedia(clip));
   const [selectedClipId, setSelectedClipId] = useState<string | null>('clip-1');
   const [currentTime, setCurrentTime] = useState<number>(3.2); // seconds
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -209,6 +241,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
             const trackEnd = trackClips.reduce((max, c) => Math.max(max, c.start + c.duration), 0);
             updated.push({
               ...clip,
+              duration: builtinProductionAssets.find((asset) => asset.url === clip.assetUrl)?.durationSec ?? clip.duration,
               start: trackEnd > 0 ? trackEnd : Math.max(0, Math.round(currentTime)),
             });
           });
@@ -226,7 +259,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
   // Handle Playback Loop
   useEffect(() => {
     if (isPlaying) {
-      soundFx.startScorePlayback(0.45);
+      if (!hasPackAudio) soundFx.startScorePlayback(0.45);
       playheadInterval.current = setInterval(() => {
         setCurrentTime((prev) => {
           const next = prev + 0.05;
@@ -257,7 +290,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
       soundFx.stopScorePlayback();
       if (playheadInterval.current) clearInterval(playheadInterval.current);
     };
-  }, [isPlaying, isLooping, inPoint, outPoint, totalDuration]);
+  }, [isPlaying, isLooping, inPoint, outPoint, totalDuration, hasPackAudio]);
 
   // Periodic autosave simulation
   useEffect(() => {
@@ -316,6 +349,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
         name: `${clip.name} (Part 2)`,
         start: currentTime,
         duration: secondDuration,
+        sourceOffset: (clip.sourceOffset ?? 0) + firstDuration * (clip.speed || 1),
       };
 
       setClips((prev) =>
@@ -419,6 +453,28 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
   const currentVideoClip = clips.find(
     (c) => c.type === 'video' && currentTime >= c.start && currentTime <= c.start + c.duration
   );
+  const audibleOrVisible = (clip: TimelineClip) => {
+    const track = tracks.find((item) => item.id === clip.trackId);
+    return !track?.muted && (!tracks.some((item) => item.solo) || Boolean(track?.solo));
+  };
+  const activePackClips = clips.filter((clip) => isPackMedia(clip) && audibleOrVisible(clip) &&
+    currentTime >= clip.start && currentTime < clip.start + clip.duration);
+
+  function addProductionAsset(asset: BuiltinProductionAsset) {
+    if (!asset.durationSec) return;
+    const audio = asset.folder === 'Audio';
+    const overlay = asset.folder === 'VFX';
+    const clip: TimelineClip = {
+      id: crypto.randomUUID(), name: asset.name, assetUrl: asset.url,
+      trackId: overlay ? 'v2' : audio ? (asset.subfolder === 'Music' ? 'a1' : 'a2') : 'v1',
+      type: overlay ? 'overlay' : audio ? 'audio' : 'video',
+      start: currentTime, duration: asset.durationSec, speed: 1, volume: 1,
+      color: overlay ? '#06b6d4' : audio ? '#10b981' : '#8b5cf6',
+    };
+    setClips((previous) => [...previous, clip]);
+    setSelectedClipId(clip.id);
+    setTotalDuration((previous) => Math.max(previous, clip.start + clip.duration));
+  }
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[#090b11] text-slate-100">
@@ -521,7 +577,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
           >
             {/* Live Visual Media Preview */}
             <img
-              src={currentVideoClip?.assetUrl || '/assets/images/cinema_sci_fi_scene_1794406566762.jpg'}
+              src={(!isPackMedia(currentVideoClip) && currentVideoClip?.assetUrl) || '/assets/images/cinema_sci_fi_scene_1794406566762.jpg'}
               alt="Program Monitor"
               referrerPolicy="no-referrer"
               onError={(e) => handleImageError(e, currentVideoClip?.name || 'Program Monitor', 1)}
@@ -540,6 +596,10 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
               }`}
             />
 
+            {[...activePackClips.filter((clip) => clip.trackId !== 'v2'), ...activePackClips.filter((clip) => clip.trackId === 'v2')].map((clip) =>
+              <PackTimelineMedia key={clip.id} clip={clip} time={currentTime} playing={isPlaying}
+                opacity={tracks.find((track) => track.id === clip.trackId)?.opacity} />
+            )}
             {/* Simulated 35mm Film Grain / Vignette overlay */}
             <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-transparent via-transparent to-black/60" />
 
@@ -888,6 +948,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
           {/* TAB 3: EFFECTS & LUTS */}
           {activeTab === 'effects' && (
             <div className="space-y-4">
+              <BuiltinProductionLibrary title="Video, VFX and audio clips" folders={['Video', 'VFX', 'Audio']} onAdd={addProductionAsset} />
               <div className="flex items-center justify-between border-b border-purple-500/20 pb-2">
                 <span className="text-xs font-semibold uppercase tracking-wider text-purple-300 font-mono">
                   Cinematic LUTs & Shaders

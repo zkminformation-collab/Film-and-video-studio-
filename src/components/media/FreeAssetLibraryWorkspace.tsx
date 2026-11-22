@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FolderOpen,
   Search,
@@ -27,6 +27,7 @@ import { UniversalAsset } from '../../data/libraryData';
 import { useStudioAi } from '../../context/StudioAiContext';
 import { soundFx } from '../../utils/audioSynth';
 import { LottieIcon } from '../common/LottieIcon';
+import { BuiltinProductionLibrary } from './BuiltinProductionLibrary';
 
 interface FreeAssetRecord {
   assetId: string;
@@ -49,6 +50,7 @@ interface FreeAssetRecord {
   description: string;
   tags: string[];
   projectId: string;
+  durationSec?: number;
   customImported?: boolean;
 }
 
@@ -87,6 +89,8 @@ export const FreeAssetLibraryWorkspace: React.FC<FreeAssetLibraryWorkspaceProps>
 
   const [selected, setSelected] = useState<FreeAssetRecord | null>(null);
   const [statusNotice, setStatusNotice] = useState<string>('');
+  const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => () => audioPreviewRef.current?.pause(), []);
 
   // Import Modal State
   const [showImport, setShowImport] = useState<boolean>(false);
@@ -163,8 +167,8 @@ export const FreeAssetLibraryWorkspace: React.FC<FreeAssetLibraryWorkspaceProps>
       source: 'licensed',
       format: rec.format,
       size: 'Cloud Reference',
-      duration: rec.folder === 'Audio' || rec.folder === 'Video' || rec.folder === 'VFX' ? '00:10' : undefined,
-      thumbnail: rec.previewType === 'lottie' ? '' : rec.previewUrl,
+      duration: rec.durationSec ? `00:${String(rec.durationSec).padStart(2, '0')}` : rec.folder === 'Audio' || rec.folder === 'Video' || rec.folder === 'VFX' ? '00:10' : undefined,
+      thumbnail: rec.previewType === 'image' ? rec.previewUrl : '',
       mediaUrl: rec.downloadUrl || rec.sourceUrl,
       description: `${rec.description} (${rec.licenseNote})`,
       tags: [...rec.tags, rec.assetId, activeFilm.title],
@@ -223,17 +227,28 @@ export const FreeAssetLibraryWorkspace: React.FC<FreeAssetLibraryWorkspaceProps>
 
   const handleSendToModule = (rec: FreeAssetRecord, target: StudioModule, label: string) => {
     const universal = toUniversalAsset(rec);
-    addAssetToTimeline(universal);
     soundFx.playScannerBeep();
     if (target === 'editor' && onSendToEditor) {
       onSendToEditor(universal);
       return;
     }
+    addAssetToTimeline(universal);
     setStatusNotice(`Sent "${rec.name}" to ${label}.`);
     if (onNavigate) onNavigate(target);
   };
 
   const handlePreviewAudio = (rec: FreeAssetRecord) => {
+    audioPreviewRef.current?.pause();
+    if (rec.source === 'ZKMAP Built-in') {
+      const player = new Audio(rec.previewUrl);
+      audioPreviewRef.current = player;
+      void player.play().then(() => {
+        if (audioPreviewRef.current === player) setStatusNotice(`Playing "${rec.name}".`);
+      }).catch(() => {
+        if (audioPreviewRef.current === player) setStatusNotice(`Unable to play "${rec.name}".`);
+      });
+      return;
+    }
     if (rec.subfolder === 'Music') {
       soundFx.playCinematicImpact();
     } else {
@@ -289,6 +304,9 @@ export const FreeAssetLibraryWorkspace: React.FC<FreeAssetLibraryWorkspaceProps>
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[#07090e] text-slate-100">
+      <div className="max-h-[50vh] shrink-0 overflow-y-auto px-4 pt-3">
+        <BuiltinProductionLibrary title="ZKMAP production asset catalog" folders={['VFX', 'Audio', 'Video', 'Film Production']} />
+      </div>
       {/* Top Toolbar */}
       <div className="px-6 py-3.5 border-b border-slate-800 bg-slate-900/90 flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div>
@@ -510,6 +528,8 @@ export const FreeAssetLibraryWorkspace: React.FC<FreeAssetLibraryWorkspaceProps>
                             Audition Audio
                           </button>
                         </div>
+                      ) : rec.previewType === 'video' && rec.source === 'ZKMAP Built-in' ? (
+                        <video src={rec.previewUrl} preload="none" muted playsInline controls aria-label={rec.name} className="h-full w-full object-contain" />
                       ) : rec.previewUrl ? (
                         <img
                           src={rec.previewUrl}
@@ -629,18 +649,19 @@ export const FreeAssetLibraryWorkspace: React.FC<FreeAssetLibraryWorkspaceProps>
 
             {/* Add to Project & Download */}
             <div className="space-y-2">
-              <button
+              {selected.format !== 'CSV' && selected.folder !== 'Film Production' && <button
                 type="button"
                 onClick={() => handleAddToProject(selected)}
                 className="w-full py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-extrabold flex items-center justify-center gap-2 transition-colors"
               >
                 <Plus className="w-4 h-4" />
                 <span>Add to Project ({activeFilm.title})</span>
-              </button>
+              </button>}
 
               <div className="grid grid-cols-2 gap-2">
                 <a
                   href={selected.downloadUrl}
+                  download={selected.source === 'ZKMAP Built-in' || undefined}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="py-2 px-3 rounded-lg bg-slate-950 border border-slate-700 hover:border-amber-500 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5"

@@ -218,6 +218,8 @@ export const AudioStudio: React.FC<AudioStudioProps> = ({ activeFilm }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animFrameRef = useRef<number>(0);
   const triggeredClipsRef = useRef<Set<string>>(new Set());
+  const sourcePlayers = useRef(new Map<string, HTMLAudioElement>());
+  const auditionPlayer = useRef<HTMLAudioElement | null>(null);
 
   const showNotice = useCallback((msg: string) => {
     setStudioNotice(msg);
@@ -249,6 +251,7 @@ export const AudioStudio: React.FC<AudioStudioProps> = ({ activeFilm }) => {
     const hasMusicUnderPlayhead = clips.some(
       (c) =>
         c.trackRole === 'music' &&
+        !c.sourceUrl &&
         playheadSec >= c.startSec &&
         playheadSec <= c.startSec + c.durationSec
     );
@@ -265,10 +268,48 @@ export const AudioStudio: React.FC<AudioStudioProps> = ({ activeFilm }) => {
     }
   }, [tracks, masterVolume, isPlayingMasterBus, isPlayingTimeline, playheadSec, clips, getEffectiveGain]);
 
-  // Cleanup score audio on unmount
   useEffect(() => {
+    const players = sourcePlayers.current;
+    const active = new Set<string>();
+    if (isPlayingTimeline) {
+      for (const clip of clips) {
+        if (!clip.sourceUrl || playheadSec < clip.startSec || playheadSec >= clip.startSec + clip.durationSec) continue;
+        const track = tracks.find((item) => item.role === clip.trackRole);
+        const gain = track ? getEffectiveGain(track) : .8;
+        if (gain <= .001) continue;
+        active.add(clip.id);
+        const offset = playheadSec - clip.startSec;
+        let player = players.get(clip.id);
+        if (!player) {
+          player = new Audio(clip.sourceUrl);
+          players.set(clip.id, player);
+          player.currentTime = offset;
+          player.volume = gain;
+          const source = player;
+          void player.play().catch((error: DOMException) => {
+            if (error.name !== 'AbortError' && players.get(clip.id) === source) showNotice(`Unable to play "${clip.name}".`);
+          });
+        } else {
+          player.volume = gain;
+          if (!player.ended && Math.abs(player.currentTime - offset) > .3) player.currentTime = offset;
+        }
+      }
+    }
+    for (const [id, player] of players) {
+      if (active.has(id)) continue;
+      player.pause();
+      players.delete(id);
+    }
+  }, [isPlayingTimeline, playheadSec, clips, tracks, getEffectiveGain, showNotice]);
+
+  // Cleanup score and file playback on unmount
+  useEffect(() => {
+    const players = sourcePlayers.current;
     return () => {
       soundFx.stopScorePlayback();
+      auditionPlayer.current?.pause();
+      for (const player of players.values()) player.pause();
+      players.clear();
     };
   }, []);
 
@@ -283,7 +324,15 @@ export const AudioStudio: React.FC<AudioStudioProps> = ({ activeFilm }) => {
         return;
       }
 
-      if (clip.trackRole === 'voice' && clip.dialogueText) {
+      auditionPlayer.current?.pause();
+      if (clip.sourceUrl) {
+        const player = new Audio(clip.sourceUrl);
+        auditionPlayer.current = player;
+        player.volume = effective;
+        void player.play().catch((error: DOMException) => {
+          if (error.name !== 'AbortError' && auditionPlayer.current === player) showNotice(`Unable to play "${clip.name}".`);
+        });
+      } else if (clip.trackRole === 'voice' && clip.dialogueText) {
         soundFx.speakDialogue(
           clip.dialogueText,
           clip.language || 'en-US',
@@ -325,7 +374,7 @@ export const AudioStudio: React.FC<AudioStudioProps> = ({ activeFilm }) => {
     if (!isPlayingTimeline) return;
 
     clips.forEach((clip) => {
-      if (clip.trackRole === 'music') return; // Handled continuously above
+      if (clip.trackRole === 'music' || clip.sourceUrl) return; // Handled continuously above
       const inStartWindow = playheadSec >= clip.startSec && playheadSec < clip.startSec + 0.35;
       if (inStartWindow && !triggeredClipsRef.current.has(clip.id)) {
         triggeredClipsRef.current.add(clip.id);

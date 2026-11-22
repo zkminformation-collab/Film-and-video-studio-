@@ -102,6 +102,7 @@ export interface TimelineClip {
   color: string;
   type: 'video' | 'audio' | 'overlay' | 'title';
   assetUrl?: string;
+  sourceOffset?: number;
   speed?: number;
   volume?: number;
   filter?: string;
