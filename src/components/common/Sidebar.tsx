@@ -192,20 +192,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             />
             <div className="flex flex-col leading-tight">
               <span className="text-xs font-extrabold">ZKMAP STUDIO</span>
-              <span
-                className={`text-[10px] font-mono-cinema font-normal ${
-                  isLight ? 'text-neutral-500' : 'text-slate-400'
-                }`}
-              >
-                zkmapstudio.com
-              </span>
             </div>
           </a>
         ) : (
           <a
             href="/"
             aria-label="ZKMAP STUDIO Home"
-            title="ZKMAP STUDIO · zkmapstudio.com"
+            title="ZKMAP STUDIO"
             onClick={(e) => {
               e.preventDefault();
               onSelectModule('dashboard');

@@ -4820,7 +4820,7 @@ app.post('/api/manhwa/chapters/:chapterId/video-jobs', (req, res) => {
 
 app.get('/robots.txt', (_req, res) => {
   res.type('text/plain');
-  res.send('User-agent: *\nAllow: /\nSitemap: https://zkmapstudio.com/sitemap.xml\n');
+  res.send('User-agent: *\nAllow: /\nSitemap: https://zkmapstudio.onrender.com/sitemap.xml\n');
 });
 
 app.get('/sitemap.xml', (_req, res) => {
@@ -4828,7 +4828,7 @@ app.get('/sitemap.xml', (_req, res) => {
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://zkmapstudio.com/</loc>
+    <loc>https://zkmapstudio.onrender.com/</loc>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>

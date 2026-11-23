@@ -40,9 +40,6 @@ export const AuthModal: React.FC = () => {
               className="h-11 w-auto rounded-lg object-contain border border-neutral-200 shrink-0"
             />
             <div className="space-y-0.5">
-              <div className="text-[11px] font-mono-cinema font-semibold text-neutral-500">
-                zkmapstudio.com
-              </div>
               <h2 className="text-base font-bold text-neutral-950 tracking-tight">
                 {firebaseUser
                   ? 'ZKMAP STUDIO Account & Cloud Sync'

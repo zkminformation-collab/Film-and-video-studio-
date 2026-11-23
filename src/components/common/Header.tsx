@@ -105,13 +105,6 @@ export const Header: React.FC<HeaderProps> = ({
             >
               ZKMAP STUDIO
             </span>
-            <span
-              className={`text-[10px] font-mono-cinema tracking-tight whitespace-nowrap ${
-                isLight ? 'text-neutral-500' : 'text-slate-400'
-              }`}
-            >
-              zkmapstudio.com
-            </span>
           </div>
         </a>
       </div>

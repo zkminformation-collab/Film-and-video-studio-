@@ -390,7 +390,7 @@ export const CreditWalletStudio: React.FC<CreditWalletStudioProps> = ({
           key: data.razorpay.keyId || razorpayKeyId,
           amount: order.amountPaise,
           currency: 'INR',
-          name: 'ZKMAP STUDIO (zkmapstudio.com)',
+          name: 'ZKMAP STUDIO',
           description: order.itemName,
           order_id: order.orderId,
           prefill: {
@@ -1485,7 +1485,7 @@ export const CreditWalletStudio: React.FC<CreditWalletStudioProps> = ({
                 <div>
                   <h3 className="text-base font-bold">Invoice {invoicePreview.invoiceId}</h3>
                   <p className="text-xs text-neutral-500">
-                    ZKMAP STUDIO · zkmapstudio.com · {new Date(invoicePreview.createdAt).toLocaleString()}
+                    ZKMAP STUDIO · {new Date(invoicePreview.createdAt).toLocaleString()}
                   </p>
                 </div>
               </div>

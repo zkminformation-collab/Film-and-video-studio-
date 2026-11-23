@@ -409,8 +409,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <div className="flex items-center gap-2 text-xs text-amber-400 font-mono-cinema">
               <span>ZKMAP STUDIO</span>
               <span aria-hidden="true">·</span>
-              <span>zkmapstudio.com</span>
-              <span aria-hidden="true">·</span>
               <span>Executive Admin</span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-white font-cinzel">

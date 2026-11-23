@@ -18,9 +18,6 @@ import {
   Zap,
   Play,
   Activity,
-  Copy,
-  Check,
-  ExternalLink,
 } from 'lucide-react';
 import { FilmProject, StudioModule, StudioTheme } from '../../types';
 import { soundFx } from '../../utils/audioSynth';
@@ -194,20 +191,8 @@ export const StudioDashboard: React.FC<StudioDashboardProps> = ({
   const [activeTab, setActiveTab] = useState<FlowFilterTab>('all');
   const [confirmDeleteFilmId, setConfirmDeleteFilmId] = useState<string | null>(null);
   const [dictationNotice, setDictationNotice] = useState<string | null>(null);
-  const [copiedDomainUrl, setCopiedDomainUrl] = useState<boolean>(false);
 
   const isLight = theme === 'elevenlabs';
-
-  const handleCopyStudioUrl = async () => {
-    try {
-      await navigator.clipboard.writeText(BRAND_CONFIG.url);
-      setCopiedDomainUrl(true);
-      soundFx.playScannerBeep();
-      setTimeout(() => setCopiedDomainUrl(false), 2500);
-    } catch {
-      // ignore clipboard errors
-    }
-  };
 
   const handleLaunchFlow = () => {
     soundFx.playCinematicImpact();
@@ -287,44 +272,7 @@ export const StudioDashboard: React.FC<StudioDashboardProps> = ({
               />
             </a>
 
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <a
-                href={BRAND_CONFIG.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-mono-cinema font-semibold transition-colors ${
-                  isLight
-                    ? 'bg-neutral-50 border-neutral-200 text-neutral-900 hover:bg-neutral-100'
-                    : 'bg-slate-900 border-slate-700 text-slate-100 hover:bg-slate-800'
-                }`}
-              >
-                <Globe className="w-3.5 h-3.5 text-amber-500" />
-                <span>{BRAND_CONFIG.url}</span>
-                <ExternalLink className="w-3 h-3 opacity-60" />
-              </a>
 
-              <button
-                type="button"
-                onClick={() => void handleCopyStudioUrl()}
-                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
-                  isLight
-                    ? 'bg-white border-neutral-200 text-neutral-700 hover:bg-neutral-50'
-                    : 'bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800'
-                }`}
-              >
-                {copiedDomainUrl ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>Copied</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Copy URL</span>
-                  </>
-                )}
-              </button>
-            </div>
           </div>
 
           <div className="space-y-2.5">
@@ -333,7 +281,7 @@ export const StudioDashboard: React.FC<StudioDashboardProps> = ({
                 isLight ? 'text-neutral-500' : 'text-slate-400'
               }`}
             >
-              {BRAND_CONFIG.name} · {BRAND_CONFIG.domain}
+              {BRAND_CONFIG.name}
             </div>
             <h1
               className={`text-3xl sm:text-4xl font-semibold tracking-tight leading-[1.15] [text-wrap:balance] ${

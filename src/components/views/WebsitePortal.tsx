@@ -341,9 +341,6 @@ export const WebsitePortal: React.FC<WebsitePortalProps> = ({
             />
             <div className="flex flex-col leading-tight">
               <span className="text-xs sm:text-sm font-extrabold text-neutral-950">ZKMAP STUDIO</span>
-              <span className="text-[10px] font-mono-cinema font-medium text-neutral-500">
-                zkmapstudio.com
-              </span>
             </div>
           </a>
 
@@ -927,7 +924,7 @@ export const WebsitePortal: React.FC<WebsitePortalProps> = ({
       </main>
 
       <footer className="border-t border-neutral-200 py-8 px-6 text-center text-xs text-neutral-500">
-        ZKMAP STUDIO · https://zkmapstudio.com · Unified AI Film, Manhwa, Voice, Audio &amp; 4K Master Suite
+        ZKMAP STUDIO · Unified AI Film, Manhwa, Voice, Audio &amp; 4K Master Suite
       </footer>
     </div>
   );

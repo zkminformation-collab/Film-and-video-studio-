@@ -1286,7 +1286,7 @@ export function getInvoiceHtmlById(invoiceId: string): string | null {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Invoice ${esc(payment.invoiceId)} · ZKMAP STUDIO (zkmapstudio.com)</title>
+  <title>Invoice ${esc(payment.invoiceId)} · ZKMAP STUDIO</title>
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; color: #111827; background: #f9fafb; margin: 0; padding: 32px; }
     .card { max-width: 720px; margin: 0 auto; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 40px; }
@@ -1316,7 +1316,7 @@ export function getInvoiceHtmlById(invoiceId: string): string | null {
         <img src="/images/zkmap-studio-logo.png" alt="ZKMAP STUDIO" class="brand-logo" />
         <div>
           <div class="brand">ZKMAP STUDIO</div>
-          <div class="muted">https://zkmapstudio.com · Tax Invoice &amp; Payment Receipt</div>
+          <div class="muted">Tax Invoice &amp; Payment Receipt</div>
         </div>
       </div>
       <div style="text-align: right;">
