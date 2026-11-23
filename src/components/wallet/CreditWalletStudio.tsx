@@ -605,6 +605,26 @@ export const CreditWalletStudio: React.FC<CreditWalletStudioProps> = ({
           </div>
         </div>
 
+        <div className={`flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between ${cardBg}`}>
+          <p id="razorpay-link-note" className={`text-sm ${mutedText}`}>
+            Payments made through this Razorpay link do not automatically add credits to your account.
+          </p>
+          <a
+            href="https://razorpay.me/@zkmapstudio"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-describedby="razorpay-link-note"
+            className={`inline-flex items-center gap-2 self-start rounded-xl px-4 py-2 text-sm font-semibold whitespace-nowrap transition-colors sm:self-auto ${
+              isLight
+                ? 'bg-neutral-950 text-white hover:bg-neutral-800'
+                : 'bg-white text-black hover:bg-slate-200'
+            }`}
+          >
+            <CreditCard aria-hidden="true" className="h-4 w-4" />
+            Pay via Razorpay Link
+          </a>
+        </div>
+
         {/* Status Toast */}
         {notice && (
           <div
