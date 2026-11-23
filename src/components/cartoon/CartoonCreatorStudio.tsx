@@ -220,6 +220,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
 
   // Preview playback & approval gate
   const [isPreviewPlaying, setIsPreviewPlaying] = useState<boolean>(false);
+  const [manualPreviewVoice, setManualPreviewVoice] = useState<HTMLAudioElement | null>(null);
   const [previewSceneIdx, setPreviewSceneIdx] = useState<number>(0);
   const [watchedAllScenesInSession, setWatchedAllScenesInSession] = useState<boolean>(false);
   const [chapterTitle, setChapterTitle] = useState('');
@@ -359,7 +360,10 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
           `/api/cartoon-projects/${encodeURIComponent(activeProject.id)}/scenes/${previewScene.sceneNumber}/preview-voice`,
           { method: 'POST', signal: request.signal }
         );
-        if (!response.ok) throw new Error('Studio voice unavailable');
+        if (!response.ok) {
+          failVoice(`Studio voice request failed (HTTP ${response.status}).`);
+          return;
+        }
         const voice = await response.blob();
         if (request.signal.aborted) return;
         audioUrl = URL.createObjectURL(voice);
@@ -368,15 +372,24 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
           speechFinished = true;
           advance();
         };
-        audio.onerror = failVoice;
-        await audio.play();
+        audio.onerror = () => failVoice('Chrome could not decode the Studio voice audio.');
+        try {
+          await audio.play();
+        } catch (error) {
+          if (request.signal.aborted) return;
+          if (error instanceof DOMException && error.name === 'NotAllowedError') {
+            setManualPreviewVoice(audio);
+            return;
+          }
+          failVoice('Chrome could not play the Studio voice audio.');
+        }
       } catch {
-        failVoice();
+        failVoice('Could not connect to the Studio voice service.');
       }
     };
-    function failVoice() {
+    function failVoice(message: string) {
       if (request.signal.aborted) return;
-      showToast('error', 'Dialogue could not play. Check the Studio voice provider or browser audio permissions, then retry.');
+      showToast('error', message);
       setIsPreviewPlaying(false);
     }
 
@@ -400,6 +413,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
 
     return () => {
       request.abort();
+      setManualPreviewVoice(null);
       window.clearTimeout(timer);
       if (audio) {
         audio.onended = null;
@@ -2252,6 +2266,16 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                 {/* STEP 12: Preview Complete Film (Preview Is NOT Final Confirmation!) */}
                 {activeStepNumber === 12 && (
                   <div className="space-y-4">
+                    {manualPreviewVoice && (
+                      <button type="button" className="rounded-lg border px-3 py-2 text-sm"
+                        onClick={() => {
+                          void manualPreviewVoice.play().then(() => setManualPreviewVoice(null)).catch(() => {
+                            showToast('error', 'Chrome still could not play the Studio voice audio.');
+                          });
+                        }}>
+                        Play scene dialogue
+                      </button>
+                    )}
                     {activeProject.scenes.length > 0 && (
                       <div className="rounded-2xl overflow-hidden border border-neutral-800 bg-black text-white">
                         <div className="relative h-72 sm:h-80 flex items-center justify-center">

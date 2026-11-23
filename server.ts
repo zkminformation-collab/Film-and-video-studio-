@@ -868,10 +868,7 @@ async function synthesizeSpeechAudio(params: {
             role: 'user',
             parts: [
               {
-                text: params.cleanText,
-                speechMetadata: {
-                  style: styleHints || 'Clear natural voice actor dialogue',
-                },
+                text: `Read the following dialogue aloud. Delivery: ${styleHints || 'clear natural dialogue'}.\n\n${params.cleanText}`,
               },
             ],
           },
