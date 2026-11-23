@@ -7,6 +7,7 @@
       "dependencies": {
         "@firebase/eslint-plugin-security-rules": "^0.0.2",
         "@google/genai": "^3.4.0",
+        "@spelling-creator/spellophone": "0.2.1",
         "@tailwindcss/vite": "^4.3.3",
         "@vitejs/plugin-react": "^6.1.1",
         "animate.css": "^4.1.1",
@@ -330,6 +331,8 @@
     "@rolldown/binding-win32-x64-msvc": ["@rolldown/binding-win32-x64-msvc@1.2.19", "", { "os": "win32", "cpu": "x64" }, "sha512-y/sqRRc6d7hECzOFc5n3LSeqctmIp9mMjY1Kq4s14uLPd/LZ4z7i1zrW6fMtp2mPeuQIC4e6ULMcwQzMomqQag=="],
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.1.1", "", {}, "sha512-glFIJDvLNDtJhT9qrMFWLPbvS+skxgt4L0K8Ei2YtnhPysAJnsI7nyxSJxKj4ADeKX0OLjC4ntRkwpLOoS3rwA=="],
+
+    "@spelling-creator/spellophone": ["@spelling-creator/spellophone@0.2.1", "", {}, "sha512-VIqceoh9+mdm63S2pY1FGGVH5nateiLZY0PoD+ADFqKWl+zYLnY13zeywVDzc/w+hv9uLTItSC96sHbHBiNPtA=="],
 
     "@tailwindcss/node": ["@tailwindcss/node@4.3.5", "", { "dependencies": { "@jridgewell/remapping": "^2.3.5", "enhanced-resolve": "^5.24.5", "jiti": "^2.7.0", "lightningcss": "1.33.0", "magic-string": "^1.1.0", "source-map-js": "^1.2.1", "tailwindcss": "4.3.5" } }, "sha512-yT53FzV4ke0cr/BguDxhWMpm5MJu1O2muzk+tKw6lKHjODAsYArBbWwFbJiaksfzFv1tpkO9QHGzmfs1hJT66g=="],
 

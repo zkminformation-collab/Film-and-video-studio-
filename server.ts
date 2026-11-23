@@ -3242,13 +3242,32 @@ app.get('/api/cartoon-projects', (_req, res) => {
   res.json({ success: true, projects: listCartoonProjects() });
 });
 
-function synthesizeCartoonDialogue(text: string, language: string) {
+let offlineCartoonVoice: ReturnType<typeof import('@spelling-creator/spellophone/node').createEspeak> | undefined;
+
+async function synthesizeCartoonDialogue(text: string, language: string) {
   const voice = CLOUD_TTS_VOICE_CATALOG.find((entry) => entry.language === language || entry.code === language);
-  return synthesizeSpeechAudio({
+  const languageCode = voice?.code || 'kn-IN';
+  const cloudAudio = await synthesizeSpeechAudio({
     cleanText: text,
-    languageCode: voice?.code || 'kn-IN',
+    languageCode,
     gender: 'Female',
   });
+  if (cloudAudio?.audioBuffer.length) return cloudAudio;
+
+  try {
+    const { createEspeak, encodeWav } = await import('@spelling-creator/spellophone/node');
+    offlineCartoonVoice ??= createEspeak().catch((error) => {
+      offlineCartoonVoice = undefined;
+      throw error;
+    });
+    const engine = await offlineCartoonVoice;
+    const { samples, sampleRate } = engine.synthesize(text, { voice: languageCode.split('-')[0] });
+    if (!samples.some((sample) => sample !== 0)) return null;
+    return { audioBuffer: Buffer.from(encodeWav(samples, sampleRate)), mimeType: 'audio/wav' };
+  } catch (error) {
+    console.warn('Offline cartoon dialogue synthesis failed:', error);
+    return null;
+  }
 }
 
 app.post('/api/cartoon-projects/:id/scenes/:sceneNumber/preview-voice', async (req, res) => {
