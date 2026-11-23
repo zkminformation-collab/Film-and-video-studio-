@@ -3263,6 +3263,40 @@ function synthesizeCartoonDialogue(text: string, language: string) {
   });
 }
 
+app.post('/api/cartoon-projects/:id/scenes/:sceneNumber/preview-voice', async (req, res) => {
+  const project = getCartoonProject(req.params.id);
+  const scene = project?.scenes.find((item) => item.sceneNumber === Number(req.params.sceneNumber));
+  const dialogue = scene?.dialogueText?.trim();
+  if (!project || !dialogue) return res.status(404).json({ error: 'Scene dialogue not found.' });
+
+  try {
+    const voice = await synthesizeCartoonDialogue(dialogue, project.language);
+    if (!voice?.audioBuffer.length) return res.status(503).json({ error: 'Studio dialogue voice is unavailable.' });
+    if (!/^audio\/(?:L16|pcm)\b/i.test(voice.mimeType)) {
+      return res.type(voice.mimeType).send(voice.audioBuffer);
+    }
+
+    const rate = Number(voice.mimeType.match(/rate=(\d+)/i)?.[1] || 24000);
+    const length = voice.audioBuffer.length;
+    const header = Buffer.alloc(44);
+    header.write('RIFF');
+    header.writeUInt32LE(36 + length, 4);
+    header.write('WAVEfmt ', 8);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(1, 22);
+    header.writeUInt32LE(rate, 24);
+    header.writeUInt32LE(rate * 2, 28);
+    header.writeUInt16LE(2, 32);
+    header.writeUInt16LE(16, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(length, 40);
+    return res.type('audio/wav').send(Buffer.concat([header, voice.audioBuffer]));
+  } catch {
+    return res.status(503).json({ error: 'Studio dialogue voice is unavailable.' });
+  }
+});
+
 app.post('/api/cartoon-projects', (req, res) => {
   try {
     const { name, projectType, animationStyle, aspectRatio, language, storyPrompt } = req.body || {};

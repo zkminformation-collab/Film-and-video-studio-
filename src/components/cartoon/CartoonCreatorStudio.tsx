@@ -329,11 +329,11 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
   const previewScene = activeProject?.scenes[previewSceneIdx];
 
   useEffect(() => {
-    if (!isPreviewPlaying || !previewScene || activeStepNumber !== 12) return;
+    if (!isPreviewPlaying || !previewScene || !activeProject || activeStepNumber !== 12) return;
 
     const speech = window.speechSynthesis;
     const text = previewScene.dialogueText?.trim();
-    let speechFinished = !speech || !text;
+    let speechFinished = !text;
     let sceneTimeElapsed = false;
     const advance = () => {
       if (!speechFinished || !sceneTimeElapsed) return;
@@ -350,6 +350,36 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
       advance();
     }, Math.max(2, previewScene.durationSec || 3) * 1000);
 
+    const request = new AbortController();
+    let audio: HTMLAudioElement | undefined;
+    let audioUrl: string | undefined;
+    const playStudioVoice = async () => {
+      try {
+        const response = await fetch(
+          `/api/cartoon-projects/${encodeURIComponent(activeProject.id)}/scenes/${previewScene.sceneNumber}/preview-voice`,
+          { method: 'POST', signal: request.signal }
+        );
+        if (!response.ok) throw new Error('Studio voice unavailable');
+        const voice = await response.blob();
+        if (request.signal.aborted) return;
+        audioUrl = URL.createObjectURL(voice);
+        audio = new Audio(audioUrl);
+        audio.onended = () => {
+          speechFinished = true;
+          advance();
+        };
+        audio.onerror = failVoice;
+        await audio.play();
+      } catch {
+        failVoice();
+      }
+    };
+    function failVoice() {
+      if (request.signal.aborted) return;
+      showToast('error', 'Dialogue could not play. Check the Studio voice provider or browser audio permissions, then retry.');
+      setIsPreviewPlaying(false);
+    }
+
     let utterance: SpeechSynthesisUtterance | undefined;
     if (speech && text) {
       const languageCodes: Record<string, string> = {
@@ -362,25 +392,28 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
         speechFinished = true;
         advance();
       };
-      utterance.onerror = () => {
-        showToast('error', 'Preview voice unavailable for this browser or language.');
-        setIsPreviewPlaying(false);
-      };
+      utterance.onerror = () => void playStudioVoice();
       speech.speak(utterance);
     } else if (text) {
-      showToast('error', 'Preview voice is unavailable in this browser.');
-      setIsPreviewPlaying(false);
+      void playStudioVoice();
     }
 
     return () => {
+      request.abort();
       window.clearTimeout(timer);
+      if (audio) {
+        audio.onended = null;
+        audio.onerror = null;
+        audio.pause();
+      }
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
       if (utterance) {
         utterance.onend = null;
         utterance.onerror = null;
         speech.cancel();
       }
     };
-  }, [isPreviewPlaying, previewScene, previewSceneIdx, activeProject?.scenes.length, activeProject?.language, activeStepNumber]);
+  }, [isPreviewPlaying, previewScene, previewSceneIdx, activeProject?.scenes.length, activeProject?.language, activeProject?.id, activeStepNumber]);
 
   const replaceProjectInState = (updated: CartoonFilmProject) => {
     setProjects((prev) => {
