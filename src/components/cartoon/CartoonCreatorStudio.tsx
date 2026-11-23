@@ -620,8 +620,10 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
       } else {
         showToast('success', `Step ${stepNumber} updated cleanly.`);
       }
+      return true;
     } catch (err: any) {
       showToast('error', err?.message || 'Could not execute step.');
+      return false;
     } finally {
       setBusyAction(null);
     }
@@ -2245,7 +2247,12 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                           <div className="flex items-center gap-2">
                             <button
                               type="button"
+                              disabled={busyAction === 'step-12'}
                               onClick={() => {
+                                if (!activeProject.previewGenerated) {
+                                  void handleRunStep(activeProject.id, 12);
+                                  return;
+                                }
                                 setIsPreviewPlaying((v) => !v);
                                 soundFx.playScannerBeep();
                               }}
@@ -2265,6 +2272,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                             </button>
                             <button
                               type="button"
+                              disabled={busyAction === 'step-12'}
                               onClick={() => void handleRunStep(activeProject.id, 12)}
                               className="px-3.5 py-1.5 rounded-lg border border-neutral-700 hover:bg-neutral-800 font-semibold"
                             >
@@ -2537,8 +2545,8 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                           <button
                             type="button"
                             onClick={async () => {
-                              await handleRunStep(activeProject.id, 14);
-                              setActiveStepNumber(15);
+                              if (!(await handleRunStep(activeProject.id, 14))) return;
+                              setActiveStepNumber(activeProject.previewGenerated ? 15 : 12);
                             }}
                             className={`px-5 py-2 rounded-xl text-xs font-semibold ${
                               isLight ? 'bg-neutral-950 text-white' : 'bg-emerald-500 text-slate-950'
@@ -2565,8 +2573,21 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                           <span>Final Approval &amp; MP4 Export Are Locked</span>
                         </div>
                         <p className="opacity-85">
-                          Complete Step 12 (Preview), Step 13 (Add to Editing Timeline), and Step 14 (Fix all errors &amp; mark Editing Complete) before Final Approval unlocks.
+                          Complete the remaining prerequisite to unlock Final Approval.
                         </p>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-current px-3 py-1.5 font-semibold"
+                          onClick={() => setActiveStepNumber(
+                            !activeProject.previewGenerated ? 12 : !activeProject.timelineAdded ? 13 : 14
+                          )}
+                        >
+                          {!activeProject.previewGenerated
+                            ? 'Go to Step 12 · Film Preview'
+                            : !activeProject.timelineAdded
+                            ? 'Go to Step 13 · Editing Timeline'
+                            : 'Go to Step 14 · Quality Checks'}
+                        </button>
                       </div>
                     )}
 
