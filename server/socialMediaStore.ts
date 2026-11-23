@@ -41,7 +41,7 @@ export interface SocialUploadJob {
   thumbnailName: string;
   videoFileName: string;
   progress: number;
-  status: 'Queued' | 'Uploading' | 'Processing' | 'Published' | 'Failed';
+  status: 'Queued' | 'Uploading' | 'Processing' | 'Published' | 'Simulation complete' | 'Failed';
   errorMessage?: string;
   publishedUrl?: string;
   retryCount: number;
@@ -246,6 +246,18 @@ function loadDb(): SocialMediaDatabase {
 }
 
 let db: SocialMediaDatabase = loadDb();
+
+function isSimulatedPublishUrl(url?: string): boolean {
+  return /(?:[?=\/])(?:youtube|instagram|facebook)-[\w-]+$/.test(url || '');
+}
+
+for (const job of db.social_upload_jobs) {
+  if (!isSimulatedPublishUrl(job.publishedUrl)) continue;
+  job.status = 'Simulation complete';
+  delete job.publishedUrl;
+  job.errorMessage = 'Simulation only. No video was uploaded.';
+}
+db.social_publish_history = db.social_publish_history.filter((entry) => !isSimulatedPublishUrl(entry.publishedUrl));
 
 function saveDb() {
   try {
@@ -584,40 +596,18 @@ function advanceJobProgress(jobId: string) {
     { delay: 450, progress: 28, status: 'Uploading' as const },
     { delay: 1000, progress: 64, status: 'Uploading' as const },
     { delay: 1650, progress: 88, status: 'Processing' as const },
-    { delay: 2300, progress: 100, status: 'Published' as const },
+    { delay: 2300, progress: 100, status: 'Simulation complete' as const },
   ];
 
   steps.forEach((step) => {
     setTimeout(() => {
-      const target = db.social_upload_jobs.find((j) => j.id === jobId);
-      if (!target || target.status === 'Failed' || target.status === 'Published') return;
-
+      const target = db.social_upload_jobs.find((job) => job.id === jobId);
+      if (!target || ['Failed', 'Published', 'Simulation complete'].includes(target.status)) return;
       target.progress = step.progress;
       target.status = step.status;
       target.updatedAt = new Date().toISOString();
-
-      if (step.status === 'Published') {
-        const account = db.social_accounts.find((a) => a.platform === target.platform);
-        const slug = `${target.platform}-${target.id.slice(-6)}`;
-        const urlMap: Record<SocialPlatform, string> = {
-          youtube: `https://youtube.com/watch?v=${slug}`,
-          instagram: `https://instagram.com/reel/${slug}`,
-          facebook: `https://facebook.com/videos/${slug}`,
-        };
-        target.publishedUrl = urlMap[target.platform];
-
-        db.social_publish_history.unshift({
-          id: `hist-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          jobId: target.id,
-          platform: target.platform,
-          filmTitle: target.filmTitle,
-          videoTitle: target.title,
-          format: target.format,
-          privacy: target.privacy,
-          publishedUrl: target.publishedUrl,
-          mode: account?.connectionMode === 'live_oauth' ? 'live_oauth' : 'sandbox',
-          publishedAt: new Date().toISOString(),
-        });
+      if (step.status === 'Simulation complete') {
+        target.errorMessage = 'Simulation only. No video was uploaded.';
       }
       saveDb();
     }, step.delay);
@@ -667,6 +657,7 @@ export function createPublishJobs(params: {
     const tokenRecord = db.social_access_tokens.find((t) => t.accountId === acc.id);
     const decrypted = tokenRecord ? decryptTokenPayload(tokenRecord) : null;
     const isSimulatedFailure = params.simulateFailurePlatform === platform;
+    const liveUploadUnavailable = acc.connectionMode === 'live_oauth';
 
     const job: SocialUploadJob = {
       id: `job-${platform}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
@@ -684,9 +675,11 @@ export function createPublishJobs(params: {
       privacy: params.privacy || 'Public',
       thumbnailName: params.thumbnailName || 'film_thumbnail.png',
       videoFileName: params.videoFileName || 'Studio_Master.mp4',
-      progress: isSimulatedFailure ? 42 : 8,
-      status: isSimulatedFailure ? 'Failed' : 'Uploading',
-      errorMessage: isSimulatedFailure
+      progress: liveUploadUnavailable ? 0 : isSimulatedFailure ? 42 : 8,
+      status: liveUploadUnavailable || isSimulatedFailure || !decrypted ? 'Failed' : 'Uploading',
+      errorMessage: liveUploadUnavailable
+        ? 'Direct publishing is unavailable. Upload the actual MP4 through the platform studio.'
+        : isSimulatedFailure
         ? 'Simulated chunk timeout during upload. Click Retry Upload to resume cleanly.'
         : decrypted
         ? undefined
@@ -699,7 +692,7 @@ export function createPublishJobs(params: {
     db.social_upload_jobs.unshift(job);
     created.push(job);
 
-    if (!isSimulatedFailure && decrypted) {
+    if (!liveUploadUnavailable && !isSimulatedFailure && decrypted) {
       advanceJobProgress(job.id);
     }
   });
@@ -716,6 +709,16 @@ export function retryUploadJob(jobId: string): SocialUploadJob | null {
   if (!acc || !acc.connected) {
     job.status = 'Failed';
     job.errorMessage = `Connect your ${job.platform} account first before retrying.`;
+    job.updatedAt = new Date().toISOString();
+    saveDb();
+    return job;
+  }
+
+  if (job.status === 'Published' || job.status === 'Simulation complete') return job;
+  if (acc.connectionMode === 'live_oauth') {
+    job.status = 'Failed';
+    job.progress = 0;
+    job.errorMessage = 'Direct publishing is unavailable. Upload the actual MP4 through the platform studio.';
     job.updatedAt = new Date().toISOString();
     saveDb();
     return job;

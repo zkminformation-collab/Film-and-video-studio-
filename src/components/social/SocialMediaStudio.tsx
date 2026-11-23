@@ -66,7 +66,7 @@ interface UploadJob {
   thumbnailName: string;
   videoFileName: string;
   progress: number;
-  status: 'Queued' | 'Uploading' | 'Processing' | 'Published' | 'Failed';
+  status: 'Queued' | 'Uploading' | 'Processing' | 'Published' | 'Simulation complete' | 'Failed';
   errorMessage?: string;
   publishedUrl?: string;
   retryCount: number;
@@ -302,7 +302,11 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ activeFilm
     if (res.ok) {
       applyServerState(data);
       setActiveTab('upload_progress');
-      showNotice(`Started independent upload jobs for ${selectedPlatforms.map((p) => p.toUpperCase()).join(', ')}.`);
+      if (data.createdJobs?.every((job: { status: string }) => job.status === 'Failed')) {
+        showError(data.createdJobs[0]?.errorMessage || 'Upload could not start.');
+      } else {
+        showNotice('Sandbox test started. No platform upload will be made.');
+      }
     } else {
       showError(data.error || 'Publish request failed.');
     }
@@ -314,7 +318,8 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ activeFilm
     if (res.ok) {
       const data = await res.json();
       applyServerState(data);
-      showNotice('Retrying failed platform upload...');
+      if (data.job?.status === 'Failed') showError(data.job.errorMessage || 'Upload could not start.');
+      else if (data.job?.status === 'Uploading') showNotice('Retrying the sandbox test...');
     }
   };
 
@@ -1195,6 +1200,12 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ activeFilm
                     <span>
                       File: {job.videoFileName} · Format: {job.format} · Retries: {job.retryCount}
                     </span>
+                    {job.platform === 'youtube' && job.status !== 'Published' && (
+                      <a href="https://studio.youtube.com/" target="_blank" rel="noopener noreferrer"
+                        className="text-cyan-400 flex items-center gap-1">
+                        <ExternalLink className="w-3 h-3" /> Upload MP4 in YouTube Studio
+                      </a>
+                    )}
                     {job.publishedUrl && (
                       <span className="text-emerald-400 flex items-center gap-1">
                         <ExternalLink className="w-3 h-3" /> {job.publishedUrl}
