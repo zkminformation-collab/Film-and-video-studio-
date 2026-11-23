@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import {
   Share2,
   Youtube,
@@ -110,6 +111,11 @@ const SECTION_TABS: { id: SocialSectionTab; label: string; icon: React.ElementTy
 ];
 
 export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ activeFilm }) => {
+  const { firebaseUser, isAdmin } = useAuth();
+  const [selectedMp4, setSelectedMp4] = useState<File | null>(null);
+  const [youtubeAudience, setYouTubeAudience] = useState('');
+  const [youtubeUploading, setYouTubeUploading] = useState(false);
+  const [youtubeResult, setYouTubeResult] = useState<{ url: string; privacyStatus: string } | null>(null);
   const [activeTab, setActiveTab] = useState<SocialSectionTab>('accounts');
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [jobs, setJobs] = useState<UploadJob[]>([]);
@@ -269,6 +275,32 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ activeFilm
       const data = await res.json();
       applyServerState(data);
       showNotice(`Disconnected ${platform.toUpperCase()} and purged encrypted access token.`);
+    }
+  };
+
+  const youtubeChannel = accounts.find((account) => account.platform === 'youtube' && account.connectionMode === 'live_oauth');
+  const uploadToYouTube = async () => {
+    if (!firebaseUser || !isAdmin || !selectedMp4 || !youtubeAudience || !youtubeChannel || youtubeUploading) return;
+    setYouTubeUploading(true);
+    setYouTubeResult(null);
+    try {
+      const params = new URLSearchParams({
+        title: publishTitle, description: publishDescription, channelId: youtubeChannel.handleOrId,
+        privacy: privacySetting.toLowerCase(), madeForKids: youtubeAudience,
+      });
+      const response = await fetch(`/api/social/youtube/upload?${params}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${await firebaseUser.getIdToken()}`, 'Content-Type': 'video/mp4' },
+        body: selectedMp4,
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'YouTube upload failed.');
+      setYouTubeResult(data);
+      showNotice(`YouTube received the video. Visibility: ${data.privacyStatus}. Processing may take time.`);
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'YouTube upload failed.');
+    } finally {
+      setYouTubeUploading(false);
     }
   };
 
@@ -770,12 +802,36 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ activeFilm
                   onChange={(e) => {
                     const f = e.target.files?.[0];
                     if (f) {
+                      setSelectedMp4(/\.mp4$/i.test(f.name) ? f : null);
                       setVideoFileName(f.name);
                       setVideoFileSize(`${(f.size / (1024 * 1024)).toFixed(2)} MB (${f.type || 'video/mp4'})`);
                       showNotice(`Attached video file "${f.name}" ready for multi-platform publishing.`);
                     }
                   }}
                 />
+              </div>
+
+              <div className="space-y-2">
+                <p>Live YouTube upload uses the title, description and visibility from Multi-Platform Publish.</p>
+                <p>{youtubeChannel ? `Channel: ${youtubeChannel.accountName} (${youtubeChannel.handleOrId})` : 'Connect a live YouTube channel first.'}</p>
+                {!isAdmin && <p>Sign in as a Studio administrator to upload.</p>}
+                <label className="block">
+                  YouTube audience
+                  <select value={youtubeAudience} onChange={(event) => setYouTubeAudience(event.target.value)}
+                    className="ml-2 rounded bg-slate-950 p-2">
+                    <option value="">Select audience</option>
+                    <option value="true">Made for kids</option>
+                    <option value="false">Not made for kids</option>
+                  </select>
+                </label>
+                <button type="button" onClick={() => void uploadToYouTube()}
+                  disabled={!selectedMp4 || !youtubeAudience || !youtubeChannel || !isAdmin || youtubeUploading}
+                  className="rounded bg-red-700 px-4 py-2 font-semibold text-white disabled:opacity-50">
+                  {youtubeUploading ? 'Sending MP4 to YouTube…' : `Upload to YouTube · ${privacySetting}`}
+                </button>
+                {youtubeResult && <a className="block text-cyan-400" href={youtubeResult.url} target="_blank" rel="noopener noreferrer">
+                  Open uploaded video · {youtubeResult.privacyStatus}
+                </a>}
               </div>
 
               <div className="space-y-1.5">
@@ -790,6 +846,7 @@ export const SocialMediaStudio: React.FC<SocialMediaStudioProps> = ({ activeFilm
                   <button
                     key={preset.name}
                     onClick={() => {
+                      setSelectedMp4(null);
                       setVideoFileName(preset.name);
                       setVideoFileSize(preset.size);
                       showNotice(`Selected master "${preset.name}".`);

@@ -835,3 +835,66 @@ export function getSanitizedSocialState() {
     tokenVaultCount: db.social_access_tokens.length,
   };
 }
+
+export async function uploadYouTubeVideo(
+  stream: NodeJS.ReadableStream,
+  length: number,
+  channelId: string,
+  snippet: { title: string; description: string },
+  status: { privacyStatus: string; selfDeclaredMadeForKids: boolean }
+) {
+  const account = db.social_accounts.find((entry) => entry.platform === 'youtube');
+  const record = db.social_access_tokens.find((entry) => entry.platform === 'youtube' && entry.accountId === account?.id);
+  const token = record && decryptTokenPayload(record);
+  if (account?.connectionMode !== 'live_oauth' || !token) {
+    throw new Error('Connect a live YouTube channel before uploading.');
+  }
+  let accessToken = token.access_token;
+  if (token.refresh_token && process.env.YOUTUBE_CLIENT_ID && process.env.YOUTUBE_CLIENT_SECRET) {
+    const refresh = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      body: new URLSearchParams({
+        grant_type: 'refresh_token', refresh_token: token.refresh_token,
+        client_id: process.env.YOUTUBE_CLIENT_ID, client_secret: process.env.YOUTUBE_CLIENT_SECRET,
+      }),
+    });
+    const credentials = await refresh.json();
+    if (!refresh.ok || !credentials.access_token) throw new Error('YouTube authorization expired. Reconnect the channel.');
+    accessToken = credentials.access_token;
+  }
+  if (!accessToken) throw new Error('Reconnect the YouTube channel.');
+  const authorization = { Authorization: `Bearer ${accessToken}` };
+  const profile = await fetch('https://www.googleapis.com/youtube/v3/channels?part=id&mine=true', { headers: authorization });
+  const channels = await profile.json();
+  if (!profile.ok || channels.items?.length !== 1 || channels.items[0]?.id !== channelId) {
+    throw new Error('YouTube could not confirm the selected channel. Reconnect and check the channel ID.');
+  }
+  const upload = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
+    method: 'POST',
+    headers: {
+      ...authorization, 'Content-Type': 'application/json',
+      'X-Upload-Content-Type': 'video/mp4', 'X-Upload-Content-Length': String(length),
+    },
+    body: JSON.stringify({ snippet: { ...snippet, categoryId: '1' }, status }),
+  });
+  const location = upload.headers.get('location');
+  if (!upload.ok || !location || new URL(location).origin !== 'https://www.googleapis.com') {
+    throw new Error(`YouTube refused to start the upload (HTTP ${upload.status}).`);
+  }
+  const result = await fetch(location, {
+    method: 'PUT',
+    headers: { ...authorization, 'Content-Type': 'video/mp4', 'Content-Length': String(length) },
+    body: stream,
+    duplex: 'half',
+    redirect: 'error',
+  } as unknown as RequestInit);
+  const video = await result.json().catch(() => null);
+  if (!result.ok || !/^[\w-]{11}$/.test(video?.id || '')) {
+    throw new Error(`YouTube did not confirm an upload (HTTP ${result.status}). Check YouTube Studio before retrying.`);
+  }
+  return {
+    videoId: String(video.id),
+    url: `https://www.youtube.com/watch?v=${video.id}`,
+    privacyStatus: video.status?.privacyStatus || 'unknown',
+  };
+}

@@ -25,6 +25,7 @@ import {
   resetAllSocialMediaData,
   reprocessAllPendingSocialJobs,
   getSanitizedSocialState,
+  uploadYouTubeVideo,
 } from './server/socialMediaStore.ts';
 import {
   FREE_ASSET_FOLDER_TREE,
@@ -2389,6 +2390,34 @@ app.post('/api/export/render-mp4', async (req, res) => {
 // ==========================================
 // SOCIAL MEDIA STUDIO & MULTI-PLATFORM PUBLISH API
 // ==========================================
+
+app.post('/api/social/youtube/upload', async (req, res) => {
+  try {
+    await verifyAdminBearerToken(req.headers.authorization);
+  } catch {
+    return res.status(403).json({ error: 'Sign in as a ZKMAP Studio administrator to upload.' });
+  }
+  const length = Number(req.headers['content-length']);
+  const title = String(req.query.title || '').trim();
+  const description = String(req.query.description || '');
+  const channelId = String(req.query.channelId || '');
+  const privacyStatus = String(req.query.privacy || '');
+  const audience = req.query.madeForKids;
+  if (req.headers['content-type'] !== 'video/mp4' || !Number.isSafeInteger(length) ||
+      length <= 0 || length > 2 * 1024 ** 3 || !title || title.length > 100 || description.length > 1000 ||
+      !/^UC[\w-]{22}$/.test(channelId) || !['public', 'private', 'unlisted'].includes(privacyStatus) ||
+      (audience !== 'true' && audience !== 'false')) {
+    return res.status(400).json({ error: 'Choose an MP4 up to 2 GB, a valid channel, a title, visibility, and an audience.' });
+  }
+  try {
+    const result = await uploadYouTubeVideo(req, length, channelId, { title, description }, {
+      privacyStatus, selfDeclaredMadeForKids: audience === 'true',
+    });
+    return res.json(result);
+  } catch (error) {
+    return res.status(502).json({ error: error instanceof Error ? error.message : 'YouTube upload failed.' });
+  }
+});
 
 app.get('/api/social/state', (_req, res) => {
   res.json({ success: true, ...getSanitizedSocialState() });
