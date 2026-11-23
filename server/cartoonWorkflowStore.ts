@@ -1974,6 +1974,10 @@ export async function renderAndVerifyCartoonMp4(
         ? 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p'
         : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p';
 
+    const visualTreatment = existing.animationStyle === '2D Anime (Cel Shading)'
+      ? ',eq=contrast=1.12:saturation=1.25,unsharp=5:5:0.65'
+      : '';
+
     await execFileAsync('ffmpeg', [
       '-v', 'error',
       '-y',
@@ -1988,7 +1992,7 @@ export async function renderAndVerifyCartoonMp4(
       '-map', '0:v:0', '-map', '1:a:0',
       '-t', String(totalSec),
       '-vf',
-      `${scaleFilter},fps=24,tpad=stop_mode=clone:stop_duration=1`,
+      `${scaleFilter}${visualTreatment},fps=24,tpad=stop_mode=clone:stop_duration=1`,
       '-c:v',
       'libx264',
       '-preset',

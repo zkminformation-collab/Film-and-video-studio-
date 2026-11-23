@@ -1233,8 +1233,14 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                 >
                   <option value="3D Stylized Cartoon">3D Stylized Cartoon</option>
                   <option value="2D Cel-Shaded Cartoon">2D Cel-Shaded Cartoon</option>
+                  <option value="2D Anime (Cel Shading)">2D Anime (Cel Shading)</option>
                   <option value="2D Cel Manhwa + Motion Parallax">2D Cel Manhwa + Motion Parallax</option>
                 </select>
+                {newStyle === '2D Anime (Cel Shading)' && (
+                  <p className="opacity-75">
+                    Add your anime scene images in the project. Final MP4 applies enhanced color and sharper outlines.
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex justify-end gap-2">
