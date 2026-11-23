@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
 import {
   X,
-  ShieldCheck,
   LogOut,
   Sparkles,
   FolderCheck,
   AlertCircle,
-  UserCheck,
   Users,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
@@ -161,35 +159,7 @@ export const AuthModal: React.FC = () => {
               </button>
             </div>
 
-            <div className="p-4 rounded-xl bg-[#FAFAFB] border border-neutral-200 space-y-2 text-xs text-neutral-600">
-              <div className="flex items-center gap-2 text-neutral-950 font-semibold">
-                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>Which Google account should you select?</span>
-              </div>
-              <p className="leading-relaxed">
-                Select <strong className="text-neutral-950">zkm.information@gmail.com</strong> for immediate Studio Owner &amp; Admin access. If using another Gmail (such as <span className="font-mono-cinema">punithjr2@gmail.com</span>), ensure it is listed under <strong>Test Users</strong> or <strong>In Production</strong> in Google Cloud Auth Platform.
-              </p>
-            </div>
-
             <div className="space-y-2.5">
-              {/* Recommended Owner / Admin Account Sign-In */}
-              <button
-                type="button"
-                disabled={isSigningIn}
-                onClick={() => void signInWithGoogle('zkm.information@gmail.com')}
-                className="w-full py-3 px-4 rounded-xl bg-neutral-950 hover:bg-black text-white font-semibold text-xs flex items-center justify-center gap-2.5 transition-colors disabled:opacity-60"
-              >
-                <UserCheck className="w-4 h-4" />
-                <span>
-                  {isSigningIn
-                    ? 'Connecting Google Account...'
-                    : authTab === 'signup'
-                    ? 'Register / Sign In as Studio Owner (zkm.information@gmail.com)'
-                    : 'Log In as Studio Owner (zkm.information@gmail.com)'}
-                </span>
-              </button>
-
-              {/* Standard Account Chooser */}
               <button
                 type="button"
                 disabled={isSigningIn}
@@ -198,9 +168,7 @@ export const AuthModal: React.FC = () => {
               >
                 <Users className="w-4 h-4 text-neutral-600" />
                 <span>
-                  {authTab === 'signup'
-                    ? 'Sign Up with Another Google Account'
-                    : 'Choose Another Google Account'}
+                  {isSigningIn ? 'Connecting to Google…' : 'Continue with Google'}
                 </span>
               </button>
             </div>
