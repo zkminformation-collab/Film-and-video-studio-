@@ -2608,10 +2608,15 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                           </div>
                           <button
                             type="button"
+                            disabled={busyAction === 'step-12' || activeProject.scenes.length === 0}
                             onClick={() => {
                               setWatchedAllScenesInSession(false);
                               setActiveStepNumber(12);
                               setPreviewSceneIdx(0);
+                              if (!activeProject.previewGenerated) {
+                                void handleRunStep(activeProject.id, 12);
+                                return;
+                              }
                               setIsPreviewPlaying(true);
                             }}
                             className={`px-3.5 py-1.5 rounded-lg border font-semibold shrink-0 ${cardSurface}`}
