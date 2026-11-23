@@ -108,6 +108,7 @@ import {
   addReferenceAssetsToProject,
   removeReferenceAssetFromProject,
   runCartoonWorkflowStep,
+  generateCartoonSceneImages,
   parseCartoonChapters,
   updateCartoonScene,
   runQualityInspection,
@@ -3386,6 +3387,7 @@ app.post('/api/cartoon-projects/:id/az-step', async (req, res) => {
       }
       return res.json({ success: true, project: rendered });
     }
+    if ([6, 9, 10].includes(stepNum)) await generateCartoonSceneImages(req.params.id);
     const project = runAzWorkflowStep(req.params.id, stepNum, { storyPrompt });
     const syncedLibraryAssets = syncCartoonProjectAssetsToLibrary(project);
     res.json({ success: true, project, syncedLibraryAssets });
@@ -3475,6 +3477,7 @@ app.post('/api/cartoon-projects/:id/run-step', async (req, res) => {
       }
     }
 
+    if ([6, 7].includes(Number(stepNumber))) await generateCartoonSceneImages(req.params.id, sceneNumber);
     const project = runCartoonWorkflowStep(req.params.id, Number(stepNumber), {
       storyPrompt,
       fullStory: aiGeneratedStory,

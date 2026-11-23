@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { generateStudioImages } from './aiImageStudioStore.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -233,9 +234,10 @@ const CARTOON_IMAGE_POOL = [
 ];
 
 function findSceneImage(url: string) {
-  const match = /^\/(api\/cartoon-assets|src\/assets\/images|assets\/images)\/([^/]+)$/.exec(url);
+  const match = /^\/(api\/cartoon-assets|api\/library-uploads|src\/assets\/images|assets\/images)\/([^/]+)$/.exec(url);
   if (!match || match[2] === '.' || match[2] === '..' || match[2].includes('\\')) return undefined;
-  const roots = match[1] === 'api/cartoon-assets' ? [ASSETS_DIR] : match[1] === 'assets/images'
+  const roots = match[1] === 'api/cartoon-assets' ? [ASSETS_DIR] : match[1] === 'api/library-uploads'
+    ? [path.join(DATA_DIR, 'library-uploads')] : match[1] === 'assets/images'
     ? ['public/assets/images', 'src/assets/images']
     : ['src/assets/images'];
   for (const root of roots) {
@@ -246,9 +248,19 @@ function findSceneImage(url: string) {
   }
 }
 
-function assignUniqueSceneImages(scenes: CartoonSceneItem[], referenceUrls: string[]) {
+function usesSampleSceneImages(project: CartoonFilmProject) {
+  return /^proj-00[123]$/.test(project.id);
+}
+
+function assignUniqueSceneImages(scenes: CartoonSceneItem[], referenceUrls: string[], allowSamples: boolean) {
+  const sampleImages = allowSamples ? CARTOON_IMAGE_POOL : [];
+  if (!allowSamples) {
+    scenes = scenes.map((scene) => /^\/(?:src\/)?assets\/images\//.test(scene.storyImageUrl)
+      ? { ...scene, storyImageUrl: '', videoClipStatus: 'pending' }
+      : scene);
+  }
   const assigned = new Set<string>();
-  const images = new Map([...new Set([...referenceUrls, ...scenes.map((scene) => scene.storyImageUrl), ...CARTOON_IMAGE_POOL])]
+  const images = new Map([...new Set([...referenceUrls, ...scenes.map((scene) => scene.storyImageUrl), ...sampleImages])]
     .filter(Boolean).map((url) => [url, findSceneImage(url)] as const));
   const ordered = [...scenes].sort((a, b) => a.orderIndex - b.orderIndex);
   const selections = new Map<string, string>();
@@ -263,23 +275,24 @@ function assignUniqueSceneImages(scenes: CartoonSceneItem[], referenceUrls: stri
   };
   ordered.forEach((scene, index) => choose(scene, [referenceUrls[index], scene.storyImageUrl].filter(Boolean)));
   for (const scene of ordered) {
-    if (!selections.has(scene.id)) choose(scene, [...referenceUrls, ...CARTOON_IMAGE_POOL]);
+    if (!selections.has(scene.id)) choose(scene, [...referenceUrls, ...sampleImages]);
   }
   return scenes.map((scene): CartoonSceneItem => {
     const url = selections.get(scene.id);
     return {
       ...scene,
       storyImageUrl: url || '',
-      imageStatus: url ? 'ready' : 'failed',
-      lastError: url ? undefined : 'Upload another unique image for this scene.',
+      imageStatus: url ? 'ready' : 'pending',
+      lastError: url ? undefined : 'Generate or upload a unique image for this scene.',
     };
   });
 }
 
-function requireUniqueSceneImages(scenes: CartoonSceneItem[]) {
+function requireUniqueSceneImages(scenes: CartoonSceneItem[], allowSamples: boolean) {
   const assigned = new Map<string, number>();
   return scenes.map((scene) => {
-    const image = findSceneImage(scene.storyImageUrl);
+    const image = allowSamples || !/^\/(?:src\/)?assets\/images\//.test(scene.storyImageUrl)
+      ? findSceneImage(scene.storyImageUrl) : undefined;
     if (!image) throw new Error(`Scene ${scene.sceneNumber} has no available image. Run Step 6 or upload a unique image.`);
     const firstScene = assigned.get(image.digest);
     if (firstScene !== undefined) {
@@ -1457,7 +1470,7 @@ export function addReferenceAssetsToProject(
 
   p.referenceImages = currentAssets;
   if (currentAssets.length > 0 && p.scenes.length > 0) {
-    p.scenes = assignUniqueSceneImages(p.scenes, currentAssets.map((asset) => asset.url));
+    p.scenes = assignUniqueSceneImages(p.scenes, currentAssets.map((asset) => asset.url), usesSampleSceneImages(p));
     p.thumbnailUrl = currentAssets[0].url;
   } else if (currentAssets.length > 0 && !p.thumbnailUrl) {
     p.thumbnailUrl = currentAssets[0].url;
@@ -1535,6 +1548,62 @@ function getPromptSceneSettings(prompt: string) {
   };
 }
 
+function getScriptedDialogue(prompt: string) {
+  const cue = prompt.match(/\b(?:dialogue(?:\s+in\s+\p{L}+)?\s*:\s*|(?:says?|speaks?)(?:\s+in\s+\p{L}+)?\s*:\s*|(?:says?|speaks?)\s+(?=["“]))(.+)/iu);
+  if (!cue) return undefined;
+  const text = cue[1].trim();
+  return (text.match(/^["“]([^"”]+)["”]/u)?.[1]
+    ?? text.match(/^.*?[.!?।](?=\s|$)/u)?.[0]
+    ?? text).trim();
+}
+
+function invalidateCartoonExport(project: CartoonFilmProject) {
+  project.previewGenerated = false;
+  project.previewStatus = 'not_ready';
+  project.timelineAdded = false;
+  project.editingCompleted = false;
+  project.watchedFinalPreview = false;
+  project.finalApprovalConfirmed = false;
+  project.renderJob = { status: 'locked', progress: 0, verified: false };
+}
+
+export async function generateCartoonSceneImages(projectId: string, sceneNumber?: number) {
+  const initial = getCartoonProject(projectId);
+  if (!initial) throw new Error('Cartoon project not found.');
+  if (usesSampleSceneImages(initial)) return initial;
+
+  const project = runCartoonWorkflowStep(projectId, 6);
+  const images = new Map<string, { url: string; description: string }>();
+  for (const scene of project.scenes) {
+    if (scene.imageStatus === 'ready' || (sceneNumber && scene.sceneNumber !== sceneNumber)) continue;
+    const [image] = await generateStudioImages({
+      prompt: `${project.storyPrompt}\nVisual direction for scene ${scene.sceneNumber}: ${scene.description}\nShot: ${scene.framing}. Draw the scene without captions or dialogue text.`,
+      style: project.animationStyle,
+      aspectRatio: project.aspectRatio,
+      projectId,
+      projectName: project.name,
+      titlePrefix: scene.title,
+      mode: 'film_scene',
+      requirePromptGeneration: true,
+    });
+    images.set(scene.id, { url: image.url, description: scene.description });
+  }
+  const current = getCartoonProject(projectId);
+  if (!current || current.storyPrompt !== project.storyPrompt) {
+    throw new Error('The storyboard changed during image generation. Try again from Step 6.');
+  }
+  for (const scene of current.scenes) {
+    const image = images.get(scene.id);
+    if (image?.description === scene.description && scene.imageStatus !== 'ready') {
+      scene.storyImageUrl = image.url;
+    }
+  }
+  const references = (current.referenceImages || []).map((asset) => asset.url);
+  current.scenes = assignUniqueSceneImages(current.scenes, references, false);
+  if (images.size) invalidateCartoonExport(current);
+  return saveSingleProject(current);
+}
+
 export function runCartoonWorkflowStep(
   projectId: string,
   stepNumber: number,
@@ -1556,6 +1625,14 @@ export function runCartoonWorkflowStep(
   }
 
   const targetStep = Number(stepNumber);
+  const promptChanged = p.storyPrompt !== existing.storyPrompt;
+  if (promptChanged && !usesSampleSceneImages(p)) {
+    p.storyboardGenerated = false;
+    p.scenes = p.scenes.map((scene) => scene.storyImageUrl.startsWith('/api/library-uploads/')
+      ? { ...scene, storyImageUrl: '', imageStatus: 'pending', videoClipStatus: 'pending' }
+      : scene);
+    invalidateCartoonExport(p);
+  }
   const baseSeed = p.characters?.[0]?.consistencySeed || Math.floor(100000 + Math.random() * 899999);
 
   if (targetStep === 3 || (!p.fullStory && targetStep > 3)) {
@@ -1596,13 +1673,17 @@ export function runCartoonWorkflowStep(
 
   if (targetStep === 5 || (!p.storyboardGenerated && targetStep > 5)) {
     const requested = chapters.length ? {} : getPromptSceneSettings(p.storyPrompt || '');
+    const scriptedDialogue = chapters.length ? undefined : getScriptedDialogue(p.storyPrompt);
     const count = chapters.length || requested.count || Math.max(3, Math.min(25, Number(options?.sceneCount || p.scenes.length || refUrls.length || 4)));
     const settingsChanged = (requested.count !== undefined && p.scenes.length !== count)
       || (requested.duration !== undefined && p.scenes.some((scene) =>
         scene.durationSec !== requested.duration || !scene.fixedDuration,
       ));
     if (chapters.length) p.chapters = chapters.map((chapter) => chapter.title);
-    if (settingsChanged || p.scenes.length === 0 || (chapters.length > 0 && p.scenes.length < chapters.length)) {
+    const dialogueChanged = scriptedDialogue !== undefined && p.scenes.length > 0
+      && (!existing.storyboardGenerated || existing.storyPrompt !== p.storyPrompt
+        || /^Scene 1 dialogue: Ready for action on beat 1!$/.test(p.scenes[0].dialogueText));
+    if (settingsChanged || dialogueChanged || p.scenes.length === 0 || (chapters.length > 0 && p.scenes.length < chapters.length)) {
       const existingScenes = p.scenes;
       const framings: CartoonSceneItem['framing'][] = [
         'Wide Shot',
@@ -1617,11 +1698,21 @@ export function runCartoonWorkflowStep(
         const chapter = chapters[idx];
         const previous = existingScenes[idx];
         if (previous && (!chapter || previous.title === chapter.title)) {
-          return requested.duration === undefined
-            ? previous
-            : { ...previous, durationSec: requested.duration, fixedDuration: true };
+          return {
+            ...previous,
+            ...(previous.description.startsWith(`${p.animationStyle} beat `) ? {
+              description: `${p.animationStyle} beat ${scNum} advancing the story prompt.`,
+            } : {}),
+            ...(requested.duration === undefined ? {} : { durationSec: requested.duration, fixedDuration: true }),
+            ...(dialogueChanged && idx === 0 ? {
+              dialogueText: scriptedDialogue!,
+              subtitleText: scriptedDialogue!,
+              dialogueAudioStatus: 'pending' as const,
+              subtitleStatus: 'pending' as const,
+            } : {}),
+          };
         }
-        const dialogue = chapter?.description || `Scene ${scNum} dialogue: Ready for action on beat ${scNum}!`;
+        const dialogue = chapter?.description || (idx === 0 ? scriptedDialogue : undefined) || `Scene ${scNum} dialogue: Ready for action on beat ${scNum}!`;
         return {
           id: `${p.id}-sc-${scNum}`,
           sceneNumber: scNum,
@@ -1631,7 +1722,7 @@ export function runCartoonWorkflowStep(
           framing: framings[idx % framings.length],
           characterIds: [leadId],
           characterSeedUsed: p.characters[0]?.consistencySeed || baseSeed,
-          storyImageUrl: refUrls[idx] || CARTOON_IMAGE_POOL[idx] || '',
+          storyImageUrl: refUrls[idx] || (usesSampleSceneImages(p) ? CARTOON_IMAGE_POOL[idx] : '') || '',
           imageStatus: 'pending',
           videoClipStatus: 'pending',
           dialogueText: dialogue,
@@ -1649,16 +1740,8 @@ export function runCartoonWorkflowStep(
         };
       });
     }
-    if (settingsChanged && p.storyboardGenerated) {
-      p.previewGenerated = false;
-      p.previewStatus = 'not_ready';
-      p.timelineAdded = false;
-      p.editingCompleted = false;
-      p.watchedFinalPreview = false;
-      p.finalApprovalConfirmed = false;
-      p.renderJob = { status: 'locked', progress: 0, verified: false };
-    }
-    p.scenes = assignUniqueSceneImages(p.scenes, refUrls);
+    if ((settingsChanged || dialogueChanged) && p.storyboardGenerated) invalidateCartoonExport(p);
+    p.scenes = assignUniqueSceneImages(p.scenes, refUrls, usesSampleSceneImages(p));
     p.storyboardGenerated = true;
   }
 
@@ -1669,9 +1752,9 @@ export function runCartoonWorkflowStep(
   };
 
   if (targetStep === 6) {
-    p.scenes = assignUniqueSceneImages(p.scenes, refUrls);
+    p.scenes = assignUniqueSceneImages(p.scenes, refUrls, usesSampleSceneImages(p));
   } else if (targetStep === 7) {
-    p.scenes = assignUniqueSceneImages(p.scenes, refUrls).map((sc) =>
+    p.scenes = assignUniqueSceneImages(p.scenes, refUrls, usesSampleSceneImages(p)).map((sc) =>
       shouldTouchScene(sc, sc.videoClipStatus === 'failed' || sc.videoClipStatus === 'corrupted')
         ? { ...sc, videoClipStatus: sc.imageStatus === 'ready' ? 'ready' : 'failed' }
         : sc
@@ -1711,7 +1794,7 @@ export function runCartoonWorkflowStep(
         : sc
     );
   } else if (targetStep === 12) {
-    requireUniqueSceneImages(p.scenes);
+    requireUniqueSceneImages(p.scenes, usesSampleSceneImages(p));
     p.previewGenerated = true;
     // IMPORTANT: Preview is NEVER final confirmation!
     p.previewStatus = 'preview_ready_editing_required';
@@ -1851,7 +1934,7 @@ export function resolveCartoonQualityIssue(
         sc.characterSeedUsed = leadSeed;
         sc.imageStatus = 'ready';
       } else if (issue.category === 'missing_media' || issue.category === 'corrupted_video') {
-        p.scenes = assignUniqueSceneImages(p.scenes, (p.referenceImages || []).map((asset) => asset.url));
+        p.scenes = assignUniqueSceneImages(p.scenes, (p.referenceImages || []).map((asset) => asset.url), usesSampleSceneImages(p));
         const repaired = p.scenes[scIdx];
         if (issue.category === 'corrupted_video') {
           repaired.videoClipStatus = repaired.imageStatus === 'ready' ? 'ready' : 'failed';
@@ -1973,7 +2056,7 @@ export async function renderAndVerifyCartoonMp4(
     const sampleRate = 48000;
     const sceneFiles: { filePath: string; durationSec: number }[] = [];
     fs.writeFileSync(audioPath, Buffer.alloc(0));
-    const imagePaths = requireUniqueSceneImages(scenes);
+    const imagePaths = requireUniqueSceneImages(scenes, usesSampleSceneImages(existing));
     for (const [index, sc] of scenes.entries()) {
       const dialogue = sc.dialogueText?.trim();
       let pcm = Buffer.alloc(0);

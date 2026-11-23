@@ -511,6 +511,7 @@ function saveImageRecord(params: {
 
 async function synthesizeWithProvider(params: {
   provider: AiImageProvider;
+  requirePromptGeneration?: boolean;
   prompt: string;
   style: string;
   folder: ImageLibraryFolder;
@@ -572,6 +573,9 @@ async function synthesizeWithProvider(params: {
     }
   }
 
+  if (params.requirePromptGeneration) {
+    throw new Error('Could not generate an image from the scene prompt. Check the image provider settings or upload a scene image.');
+  }
   const builtIn = await renderBuiltInStudioImage({
     prompt: params.prompt,
     style: params.style,
@@ -594,6 +598,7 @@ export async function generateStudioImages(input: {
   folder?: ImageLibraryFolder;
   mode?: GeneratedImageRecord['mode'];
   provider?: AiImageProvider;
+  requirePromptGeneration?: boolean;
   projectId?: string;
   projectName?: string;
   titlePrefix?: string;
@@ -627,6 +632,7 @@ export async function generateStudioImages(input: {
   for (let i = 0; i < count; i++) {
     const out = await synthesizeWithProvider({
       provider: input.provider || 'auto',
+      requirePromptGeneration: input.requirePromptGeneration,
       prompt: enrichedPrompt,
       style,
       folder,
