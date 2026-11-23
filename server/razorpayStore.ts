@@ -86,6 +86,7 @@ export interface BillingOrderRecord {
   amountPaise: number;
   currency: 'INR';
   mode: 'live' | 'test';
+  hostedCheckout?: boolean;
   status: 'created' | 'paid' | 'failed';
   createdAt: string;
   paidAt?: string;
@@ -157,7 +158,7 @@ const BILLING_DB_PATH = path.join(DATA_DIR, 'billing-db.json');
 
 const EPHEMERAL_TEST_HMAC_SECRET =
   process.env.RAZORPAY_TEST_SIGNING_SECRET ||
-  crypto.createHash('sha256').update(`fvs-razorpay-test-${process.cwd()}`).digest('hex');
+  crypto.randomBytes(32).toString('hex');
 
 const DEFAULT_PLANS: PricingPlanConfig[] = [
   {
@@ -427,20 +428,26 @@ export function getRazorpayConfigStatus() {
   const keyId = String(process.env.RAZORPAY_KEY_ID || '').trim();
   const keySecret = String(process.env.RAZORPAY_KEY_SECRET || '').trim();
   const webhookSecret = String(process.env.RAZORPAY_WEBHOOK_SECRET || '').trim();
-  const isLiveKeysConfigured = Boolean(keyId && keySecret && keyId.startsWith('rzp_'));
+  const configured = Boolean(keySecret && /^rzp_(test|live)_/.test(keyId));
 
   return {
-    configured: isLiveKeysConfigured,
-    mode: isLiveKeysConfigured ? ('live' as const) : ('test' as const),
-    keyId: isLiveKeysConfigured ? keyId : 'rzp_test_fvs_sandbox',
+    configured,
+    mode: configured && keyId.startsWith('rzp_live_') ? ('live' as const) : ('test' as const),
+    keyId: configured ? keyId : 'rzp_test_fvs_sandbox',
     webhookConfigured: Boolean(webhookSecret),
     supportedMethods: ['upi', 'card', 'netbanking'] as RazorpayPaymentMethod[],
   };
 }
 
-function computeExpectedSignature(orderId: string, paymentId: string, mode: 'live' | 'test'): string {
-  const liveSecret = String(process.env.RAZORPAY_KEY_SECRET || '').trim();
-  const secret = mode === 'live' && liveSecret ? liveSecret : EPHEMERAL_TEST_HMAC_SECRET;
+function usesHostedCheckout(order: BillingOrderRecord) {
+  return order.hostedCheckout ?? (order.mode === 'live');
+}
+
+function computeExpectedSignature(orderId: string, paymentId: string, hostedCheckout: boolean): string {
+  const secret = hostedCheckout
+    ? String(process.env.RAZORPAY_KEY_SECRET || '').trim()
+    : EPHEMERAL_TEST_HMAC_SECRET;
+  if (!secret) throw new Error('Razorpay signing credentials are unavailable.');
   return crypto.createHmac('sha256', secret).update(`${orderId}|${paymentId}`).digest('hex');
 }
 
@@ -921,6 +928,9 @@ export async function createPaymentOrder(input: {
   }
 
   const amountPaise = Math.round(amountInr * 100);
+  if (!Number.isSafeInteger(amountPaise) || amountPaise < 100) {
+    throw new Error('The minimum payment amount is ₹1.');
+  }
   const receipt = `fvs_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
   let orderId = '';
 
@@ -976,13 +986,15 @@ export async function createPaymentOrder(input: {
     amountPaise,
     currency: 'INR',
     mode: status.mode,
+    hostedCheckout: status.configured,
     status: 'created',
     createdAt: new Date().toISOString(),
   };
 
-  db.orders.unshift(order);
-  if (db.orders.length > 300) db.orders = db.orders.slice(0, 300);
-  saveBillingDb(db);
+  const currentDb = loadBillingDb();
+  currentDb.orders.unshift(order);
+  if (currentDb.orders.length > 300) currentDb.orders = currentDb.orders.slice(0, 300);
+  saveBillingDb(currentDb);
 
   return {
     freeActivation: false,
@@ -998,7 +1010,7 @@ export function completeTestGatewayCheckout(input: {
 }) {
   const status = getRazorpayConfigStatus();
   if (status.configured) {
-    throw new Error('Test gateway simulation is disabled while Live Razorpay keys are active.');
+    throw new Error('Test gateway simulation is disabled while Razorpay credentials are active.');
   }
 
   const db = loadBillingDb();
@@ -1006,8 +1018,8 @@ export function completeTestGatewayCheckout(input: {
   if (!order) {
     throw new Error('Order not found for test checkout.');
   }
-  if (order.mode !== 'test') {
-    throw new Error('Cannot complete a live Razorpay order through the test gateway.');
+  if (usesHostedCheckout(order)) {
+    throw new Error('Cannot complete a hosted Razorpay order through the test gateway.');
   }
 
   if (input.simulateFailure) {
@@ -1023,7 +1035,7 @@ export function completeTestGatewayCheckout(input: {
   }
 
   const paymentId = `pay_test_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-  const signature = computeExpectedSignature(order.orderId, paymentId, 'test');
+  const signature = computeExpectedSignature(order.orderId, paymentId, false);
 
   return {
     success: true,
@@ -1034,12 +1046,43 @@ export function completeTestGatewayCheckout(input: {
   };
 }
 
-export function verifyRazorpayPayment(input: {
+type RazorpayVerification = {
   razorpay_order_id: string;
   razorpay_payment_id: string;
   razorpay_signature: string;
   method?: RazorpayPaymentMethod;
-}) {
+};
+
+export async function verifyRazorpayPayment(input: RazorpayVerification) {
+  const orderId = String(input.razorpay_order_id || '').trim();
+  const paymentId = String(input.razorpay_payment_id || '').trim();
+  const order = loadBillingDb().orders.find((item) => item.orderId === orderId);
+  if (!order || !usesHostedCheckout(order)) return settleRazorpayPayment(input);
+
+  const expected = computeExpectedSignature(orderId, paymentId, true);
+  if (!safeTimingEqualHex(expected, input.razorpay_signature)) {
+    throw new Error('HMAC-SHA256 payment signature verification failed. Credits were not issued.');
+  }
+  if (!/^pay_[a-zA-Z0-9]+$/.test(paymentId)) throw new Error('Invalid Razorpay payment ID.');
+  const keyId = getRazorpayConfigStatus().keyId;
+  const secret = String(process.env.RAZORPAY_KEY_SECRET || '').trim();
+  const basicAuth = Buffer.from(`${keyId}:${secret}`).toString('base64');
+  const response = await fetch(`https://api.razorpay.com/v1/payments/${paymentId}`, {
+    headers: { Authorization: `Basic ${basicAuth}` },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error('Could not verify the payment with Razorpay.');
+  const payment = await response.json() as {
+    order_id: string; amount: number; currency: string; status: string; method?: RazorpayPaymentMethod;
+  };
+  if (payment.order_id !== orderId || payment.amount !== order.amountPaise
+      || payment.currency !== order.currency || payment.status !== 'captured') {
+    throw new Error('Razorpay has not confirmed capture for this order and amount.');
+  }
+  return settleRazorpayPayment({ ...input, method: payment.method });
+}
+
+function settleRazorpayPayment(input: RazorpayVerification) {
   const orderId = String(input.razorpay_order_id || '').trim();
   const paymentId = String(input.razorpay_payment_id || '').trim();
   const signature = String(input.razorpay_signature || '').trim();
@@ -1052,6 +1095,11 @@ export function verifyRazorpayPayment(input: {
   const order = db.orders.find((o) => o.orderId === orderId);
   if (!order) {
     throw new Error('Order record not found on server. Payment cannot be verified.');
+  }
+
+  const expectedSig = computeExpectedSignature(orderId, paymentId, usesHostedCheckout(order));
+  if (!safeTimingEqualHex(expectedSig, signature)) {
+    throw new Error('HMAC-SHA256 payment signature verification failed. Credits were not issued.');
   }
 
   // Idempotency check if this exact payment was already verified
@@ -1079,14 +1127,6 @@ export function verifyRazorpayPayment(input: {
     throw new Error('Order has already been settled with a different payment ID.');
   }
 
-  const expectedSig = computeExpectedSignature(orderId, paymentId, order.mode);
-  if (!safeTimingEqualHex(expectedSig, signature)) {
-    order.status = 'failed';
-    saveBillingDb(db);
-    throw new Error('HMAC-SHA256 payment signature verification failed. Credits were not issued.');
-  }
-
-  // Signature is cryptographically verified -> fulfill order
   const now = new Date();
   order.status = 'paid';
   order.paidAt = now.toISOString();
@@ -1209,11 +1249,11 @@ export function cancelUserSubscription(userId: string) {
   };
 }
 
-export function processRazorpayWebhook(rawBody: string, signatureHeader: string) {
+export async function processRazorpayWebhook(rawBody: string, signatureHeader: string) {
   const webhookSecret = String(process.env.RAZORPAY_WEBHOOK_SECRET || '').trim();
-  const secretToUse = webhookSecret || EPHEMERAL_TEST_HMAC_SECRET;
+  if (!webhookSecret) throw new Error('Razorpay webhook signing secret is unavailable.');
 
-  const expected = crypto.createHmac('sha256', secretToUse).update(rawBody).digest('hex');
+  const expected = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
   if (!safeTimingEqualHex(expected, signatureHeader)) {
     throw new Error('Invalid Razorpay webhook signature.');
   }
@@ -1248,14 +1288,14 @@ export function processRazorpayWebhook(rawBody: string, signatureHeader: string)
 
   if (eventName === 'payment.captured' && paymentEntity?.order_id && paymentEntity?.id) {
     const order = db.orders.find((o) => o.orderId === paymentEntity.order_id);
-    if (order && order.status !== 'paid') {
+    if (order && usesHostedCheckout(order) && order.status !== 'paid') {
       saveBillingDb(db);
-      const sig = computeExpectedSignature(order.orderId, paymentEntity.id, order.mode);
+      const sig = computeExpectedSignature(order.orderId, paymentEntity.id, true);
       const mappedMethod: RazorpayPaymentMethod =
         paymentEntity.method === 'card' || paymentEntity.method === 'netbanking'
           ? paymentEntity.method
           : 'upi';
-      verifyRazorpayPayment({
+      await verifyRazorpayPayment({
         razorpay_order_id: order.orderId,
         razorpay_payment_id: paymentEntity.id,
         razorpay_signature: sig,

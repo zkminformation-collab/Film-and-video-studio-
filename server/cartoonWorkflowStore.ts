@@ -1672,7 +1672,7 @@ export function runCartoonWorkflowStep(
   const refUrls = (p.referenceImages || []).map((a) => a.url).filter(Boolean);
 
   if (targetStep === 5 || (!p.storyboardGenerated && targetStep > 5)) {
-    const requested = chapters.length ? {} : getPromptSceneSettings(p.storyPrompt || '');
+    const requested: Partial<ReturnType<typeof getPromptSceneSettings>> = chapters.length ? {} : getPromptSceneSettings(p.storyPrompt || '');
     const scriptedDialogue = chapters.length ? undefined : getScriptedDialogue(p.storyPrompt);
     const count = chapters.length || requested.count || Math.max(3, Math.min(25, Number(options?.sceneCount || p.scenes.length || refUrls.length || 4)));
     const settingsChanged = (requested.count !== undefined && p.scenes.length !== count)

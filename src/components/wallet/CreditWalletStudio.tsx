@@ -189,7 +189,7 @@ export const CreditWalletStudio: React.FC<CreditWalletStudioProps> = ({
   const [creditTransactions, setCreditTransactions] = useState<CreditTransactionRecord[]>([]);
   const [activeSub, setActiveSub] = useState<UserSubscriptionRecord | null>(null);
   const [razorpayMode, setRazorpayMode] = useState<'live' | 'test'>('test');
-  const [razorpayKeyId, setRazorpayKeyId] = useState<string>('rzp_test_fvs_sandbox');
+  const [razorpayConfigured, setRazorpayConfigured] = useState(false);
   const [loadingState, setLoadingState] = useState<boolean>(true);
 
   const [isCreatingOrder, setIsCreatingOrder] = useState<string | null>(null);
@@ -226,7 +226,7 @@ export const CreditWalletStudio: React.FC<CreditWalletStudioProps> = ({
         if (Array.isArray(data.creditTransactions)) setCreditTransactions(data.creditTransactions);
         setActiveSub(data.activeSubscription || null);
         if (data.razorpay?.mode) setRazorpayMode(data.razorpay.mode);
-        if (data.razorpay?.keyId) setRazorpayKeyId(data.razorpay.keyId);
+        setRazorpayConfigured(Boolean(data.razorpay?.configured));
       }
     } catch (err) {
       console.warn('Unable to load billing state:', err);
@@ -379,15 +379,14 @@ export const CreditWalletStudio: React.FC<CreditWalletStudioProps> = ({
 
       const order = data.order as ActiveOrderSession;
 
-      // Live Razorpay Checkout JS if live keys are active on backend
-      if (data.razorpay?.mode === 'live') {
+      if (data.razorpay?.configured) {
         const loaded = await loadRazorpayCheckoutScript();
         if (!loaded || !window.Razorpay) {
           throw new Error('Could not load Razorpay Checkout SDK.');
         }
 
         const rzp = new window.Razorpay({
-          key: data.razorpay.keyId || razorpayKeyId,
+          key: data.razorpay.keyId,
           amount: order.amountPaise,
           currency: 'INR',
           name: 'ZKMAP STUDIO',
@@ -551,7 +550,7 @@ export const CreditWalletStudio: React.FC<CreditWalletStudioProps> = ({
               <span>Credits, Subscriptions &amp; Razorpay Billing</span>
               <span aria-hidden="true">·</span>
               <span className="font-mono-cinema">
-                {razorpayMode === 'live' ? 'Razorpay Live Gateway' : 'Razorpay Verified Test Mode'}
+                {razorpayMode === 'live' ? 'Razorpay Live Gateway' : razorpayConfigured ? 'Razorpay Test Checkout' : 'Simulated Checkout'}
               </span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight">

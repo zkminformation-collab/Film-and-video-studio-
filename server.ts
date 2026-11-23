@@ -2184,12 +2184,12 @@ app.get('/api/providers/status', (_req, res) => {
         category: 'UPI, Cards, Netbanking & Subscriptions',
         configured: getRazorpayConfigStatus().configured,
         keySource: getRazorpayConfigStatus().configured
-          ? 'Environment Secret (Live RAZORPAY_KEY_ID)'
-          : 'Razorpay Test Sandbox Mode (Set RAZORPAY_KEY_ID for Live)',
+          ? 'Environment Secret (RAZORPAY_KEY_ID)'
+          : 'Simulated Checkout',
         models: ['upi', 'card', 'netbanking'],
         status: getRazorpayConfigStatus().configured
-          ? 'Live Razorpay Checkout Active'
-          : 'Verified Test Mode Active',
+          ? `Razorpay ${getRazorpayConfigStatus().mode === 'live' ? 'Live' : 'Test'} Checkout Active`
+          : 'Simulated Checkout Active',
         latency: getRazorpayConfigStatus().configured ? '180ms' : 'Local 12ms',
         type: getRazorpayConfigStatus().configured ? 'Live Gateway' : 'Test Mode'
       }
@@ -3208,10 +3208,10 @@ app.post('/api/payments/test-gateway-complete', (req, res) => {
   }
 });
 
-app.post('/api/payments/verify', (req, res) => {
+app.post('/api/payments/verify', async (req, res) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, method } = req.body || {};
-    const result = verifyRazorpayPayment({
+    const result = await verifyRazorpayPayment({
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature,
@@ -3240,13 +3240,13 @@ app.post('/api/payments/cancel-subscription', (req, res) => {
   }
 });
 
-app.post('/api/payments/webhook', (req, res) => {
+app.post('/api/payments/webhook', async (req, res) => {
   try {
     const signature = String(req.headers['x-razorpay-signature'] || '');
     const rawBody =
       (req as express.Request & { rawBody?: Buffer }).rawBody?.toString('utf8') ||
       JSON.stringify(req.body || {});
-    const result = processRazorpayWebhook(rawBody, signature);
+    const result = await processRazorpayWebhook(rawBody, signature);
     res.json(result);
   } catch (err: any) {
     res.status(400).json({
