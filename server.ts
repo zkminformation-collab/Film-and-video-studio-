@@ -861,35 +861,26 @@ async function synthesizeSpeechAudio(params: {
         .filter(Boolean)
         .join(', ');
 
-      const ttsResponse = await ai.models.generateContent({
+      const interaction = await ai.interactions.create({
         model: 'gemini-3.8-flash-lite-tts',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: `Read the following dialogue aloud. Delivery: ${styleHints || 'clear natural dialogue'}.\n\n${params.cleanText}`,
-              },
-            ],
-          },
-        ],
-        config: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: geminiVoice },
-            },
-          },
-        },
+        input: [{
+          type: 'user_input',
+          content: [{
+            type: 'text',
+            text: params.cleanText,
+            annotations: [{ type: 'speech_metadata', style: styleHints || 'Clear natural dialogue' }],
+          }],
+        }],
+        response_format: { type: 'audio' },
+        generation_config: { speech_config: [{ voice: geminiVoice }] },
       });
-
-      const inlineAudio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+      const inlineAudio = interaction.output_audio;
       if (inlineAudio?.data) {
         return {
           provider: `Gemini Neural Voice (${geminiVoice})`,
           voiceName: geminiVoice,
           languageCode: matchedCatalog.code,
-          mimeType: inlineAudio.mimeType || 'audio/wav',
+          mimeType: inlineAudio.mime_type || 'audio/wav',
           extension: 'wav',
           audioBuffer: Buffer.from(inlineAudio.data, 'base64'),
         };
