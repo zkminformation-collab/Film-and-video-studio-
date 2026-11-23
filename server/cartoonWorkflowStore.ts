@@ -89,6 +89,7 @@ export interface CartoonSceneItem {
   subtitleText: string;
   subtitleStatus: 'pending' | 'ready' | 'missing';
   durationSec: number;
+  fixedDuration?: boolean;
   lastError?: string;
 }
 
@@ -1507,6 +1508,33 @@ export function parseCartoonChapters(story: string) {
   ) ? chapters : [];
 }
 
+const promptNumbers = 'zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty'.split(' ');
+const promptNumberPattern = `(?:\\d+|a|an|${promptNumbers.slice(1).join('|')})`;
+
+function readPromptNumber(value?: string): number | undefined {
+  if (!value) return undefined;
+  if (value === 'a' || value === 'an') return 1;
+  return /^\d+$/.test(value) ? Number(value) : promptNumbers.indexOf(value);
+}
+
+function getPromptSceneSettings(prompt: string) {
+  const text = prompt.toLowerCase().replace(/[‐‑–—]/g, '-');
+  const durationPhrase = `(${promptNumberPattern})(?:\\s*-\\s*|\\s+)(?:seconds?|secs?)`;
+  const modifiers = `(?:(?:short|long|anime|cartoon|animated|cel-shaded|2d|3d)\\s+)*`;
+  const countMatch = text.match(new RegExp(
+    `\\b(${promptNumberPattern})\\s+${modifiers}(?:${durationPhrase}\\s+${modifiers})?scenes?\\b`,
+  ));
+  const durationMatch = text.match(new RegExp(
+    `\\b${durationPhrase}\\s+${modifiers}scenes?\\b|\\b(?:each scene|scene duration)(?:\\s+lasts|\\s+is|\\s*[:=])?\\s+${durationPhrase}\\b`,
+  ));
+  const count = readPromptNumber(countMatch?.[1]);
+  const duration = readPromptNumber(countMatch?.[2] || durationMatch?.[1] || durationMatch?.[2]);
+  return {
+    count: count && count <= 25 ? count : undefined,
+    duration: duration && duration <= 30 ? duration : undefined,
+  };
+}
+
 export function runCartoonWorkflowStep(
   projectId: string,
   stepNumber: number,
@@ -1567,9 +1595,14 @@ export function runCartoonWorkflowStep(
   const refUrls = (p.referenceImages || []).map((a) => a.url).filter(Boolean);
 
   if (targetStep === 5 || (!p.storyboardGenerated && targetStep > 5)) {
-    const count = chapters.length || Math.max(3, Math.min(25, Number(options?.sceneCount || p.scenes.length || refUrls.length || 4)));
+    const requested = chapters.length ? {} : getPromptSceneSettings(p.storyPrompt || '');
+    const count = chapters.length || requested.count || Math.max(3, Math.min(25, Number(options?.sceneCount || p.scenes.length || refUrls.length || 4)));
+    const settingsChanged = (requested.count !== undefined && p.scenes.length !== count)
+      || (requested.duration !== undefined && p.scenes.some((scene) =>
+        scene.durationSec !== requested.duration || !scene.fixedDuration,
+      ));
     if (chapters.length) p.chapters = chapters.map((chapter) => chapter.title);
-    if (p.scenes.length === 0 || (chapters.length > 0 && p.scenes.length < chapters.length)) {
+    if (settingsChanged || p.scenes.length === 0 || (chapters.length > 0 && p.scenes.length < chapters.length)) {
       const existingScenes = p.scenes;
       const framings: CartoonSceneItem['framing'][] = [
         'Wide Shot',
@@ -1583,7 +1616,11 @@ export function runCartoonWorkflowStep(
         const scNum = idx + 1;
         const chapter = chapters[idx];
         const previous = existingScenes[idx];
-        if (previous && (!chapter || previous.title === chapter.title)) return previous;
+        if (previous && (!chapter || previous.title === chapter.title)) {
+          return requested.duration === undefined
+            ? previous
+            : { ...previous, durationSec: requested.duration, fixedDuration: true };
+        }
         const dialogue = chapter?.description || `Scene ${scNum} dialogue: Ready for action on beat ${scNum}!`;
         return {
           id: `${p.id}-sc-${scNum}`,
@@ -1607,9 +1644,19 @@ export function runCartoonWorkflowStep(
           syncStatus: 'pending',
           subtitleText: dialogue,
           subtitleStatus: 'pending',
-          durationSec: 4,
+          durationSec: requested.duration ?? 4,
+          fixedDuration: requested.duration !== undefined || undefined,
         };
       });
+    }
+    if (settingsChanged && p.storyboardGenerated) {
+      p.previewGenerated = false;
+      p.previewStatus = 'not_ready';
+      p.timelineAdded = false;
+      p.editingCompleted = false;
+      p.watchedFinalPreview = false;
+      p.finalApprovalConfirmed = false;
+      p.renderJob = { status: 'locked', progress: 0, verified: false };
     }
     p.scenes = assignUniqueSceneImages(p.scenes, refUrls);
     p.storyboardGenerated = true;
@@ -1731,6 +1778,7 @@ export function updateCartoonScene(
       sc.musicSfxStatus = 'ready';
     }
     if (patch.durationSec !== undefined) {
+      sc.fixedDuration = undefined;
       sc.durationSec = Math.max(2, Math.min(30, Number(patch.durationSec) || 4));
     }
     if (patch.regenerate) {
@@ -1948,10 +1996,25 @@ export async function renderAndVerifyCartoonMp4(
         pcm = fs.readFileSync(pcmPath);
         if (!pcm.some((byte) => byte !== 0)) throw new Error(`Scene ${sc.sceneNumber}: the voice provider returned silent audio.`);
       }
-      const sceneDuration = Math.max(2, Math.min(180, Number(sc.durationSec) || 3));
-      const durationSec = Math.ceil(Math.max(sceneDuration, pcm.length / (sampleRate * 2)) * 25) / 25;
+      const sceneDuration = Math.max(sc.fixedDuration ? 1 : 2, Math.min(180, Number(sc.durationSec) || 3));
+      const durationSec = sc.fixedDuration
+        ? sceneDuration
+        : Math.ceil(Math.max(sceneDuration, pcm.length / (sampleRate * 2)) * 25) / 25;
+      const targetBytes = Math.round(durationSec * sampleRate) * 2;
+      if (pcm.length > targetBytes) {
+        const tempo = pcm.length / targetBytes;
+        const stages = Math.ceil(Math.log2(tempo));
+        const filter = Array(stages).fill(`atempo=${Math.pow(tempo, 1 / stages)}`).join(',');
+        const fittedPath = path.join(tempDir, 'voice-fitted.pcm');
+        await execFileAsync('ffmpeg', [
+          '-v', 'error', '-y', '-f', 's16le', '-ar', String(sampleRate), '-ac', '1',
+          '-i', path.join(tempDir, 'voice.pcm'), '-af', filter, '-t', String(durationSec),
+          '-f', 's16le', fittedPath,
+        ], { timeout: 30000 });
+        pcm = fs.readFileSync(fittedPath).subarray(0, targetBytes);
+      }
       fs.appendFileSync(audioPath, pcm);
-      fs.appendFileSync(audioPath, Buffer.alloc(Math.round(durationSec * sampleRate) * 2 - pcm.length));
+      fs.appendFileSync(audioPath, Buffer.alloc(targetBytes - pcm.length));
       sceneFiles.push({
         filePath: imagePaths[index],
         durationSec,
