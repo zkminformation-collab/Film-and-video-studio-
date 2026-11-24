@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import { openJarvisRouter } from './server/openJarvis';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -222,6 +223,8 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+app.use('/api/openjarvis', openJarvisRouter());
 
 app.use(
   express.json({

@@ -1,5 +1,6 @@
 export type StudioModule =
   | 'dashboard'
+  | 'openjarvis'
   | 'cartoon_creator'
   | 'films'
   | 'editor'

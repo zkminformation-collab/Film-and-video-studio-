@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  Activity, BookOpen, Clapperboard, Download, FileText, Film, FolderOpen, Globe,
+  Activity, BookOpen, Bot, Clapperboard, Download, FileText, Film, FolderOpen, Globe,
   Image as ImageIcon, Mic, Mic2, Music, Play, Plus, SlidersHorizontal, Sparkles,
   Trash2, Wand2, Zap,
 } from 'lucide-react';
@@ -36,6 +36,7 @@ const templates = [
 ] satisfies { module: StudioModule; title: string; description: string; image: string }[];
 
 const tools = [
+  { module: 'openjarvis', title: 'OpenJarvis', icon: Bot },
   { module: 'cartoon_creator', title: 'Cartoon & Anime', icon: Clapperboard },
   { module: 'ai_video', title: 'AI Video', icon: Film },
   { module: 'ai_image', title: 'AI Image', icon: ImageIcon },
@@ -252,7 +253,7 @@ export function StudioDashboard({
               {filter === 'all' && <button type="button" onClick={() => setFilter('apps')}>View all tools</button>}
             </div>
             <div className="studio-tools">
-              {(filter === 'all' ? tools.slice(0, 6) : tools).map(({ module, title, icon: Icon }) => (
+              {(filter === 'all' ? tools.slice(0, 7) : tools).map(({ module, title, icon: Icon }) => (
                 <button key={module} type="button" onClick={() => onNavigate(module)}><Icon size={19} /> {title}</button>
               ))}
             </div>

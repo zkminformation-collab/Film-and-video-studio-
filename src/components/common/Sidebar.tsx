@@ -4,6 +4,7 @@ import {
   Mic2,
   AudioLines,
   House,
+  Bot,
   Clapperboard,
   FolderOpen,
   BookOpen,
@@ -67,6 +68,7 @@ const PRIMARY_ITEMS: Array<{
   hasQuickAdd?: boolean;
 }> = [
   { id: 'dashboard', label: 'Overview', icon: House },
+  { id: 'openjarvis', label: 'OpenJarvis', icon: Bot },
   { id: 'cartoon_creator', label: 'AI Cartoon Creator', icon: Clapperboard },
   { id: 'ai_voice', label: 'Voice Studio', icon: Mic2, hasQuickAdd: true },
   { id: 'editor', label: 'Timeline Editor', icon: Film },

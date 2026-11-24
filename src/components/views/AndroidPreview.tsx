@@ -26,9 +26,10 @@ import { useStudioAi } from '../../context/StudioAiContext';
 
 interface AndroidPreviewProps {
   activeFilm: FilmProject;
+  onOpenAssistant: () => void;
 }
 
-export const AndroidPreview: React.FC<AndroidPreviewProps> = ({ activeFilm }) => {
+export const AndroidPreview: React.FC<AndroidPreviewProps> = ({ activeFilm, onOpenAssistant }) => {
   const { wallet } = useStudioAi();
   const [activeTab, setActiveTab] = useState<'home' | 'editor' | 'camera' | 'script' | 'more'>('editor');
   const [isPlaying, setIsPlaying] = useState(false);
@@ -85,9 +86,9 @@ export const AndroidPreview: React.FC<AndroidPreviewProps> = ({ activeFilm }) =>
                 ZKMAP STUDIO
               </span>
             </div>
-            <span className="text-[10px] text-cyan-300 font-mono bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-500/30 font-bold">
-              PRO M3
-            </span>
+            <button type="button" onClick={onOpenAssistant} className="flex items-center gap-1 text-xs font-semibold text-cyan-200 bg-cyan-950/60 px-2.5 py-1.5 rounded border border-cyan-500/30">
+              <Sparkles size={14} /> OpenJarvis
+            </button>
           </div>
 
           {/* Screen Content based on bottom navigation */}

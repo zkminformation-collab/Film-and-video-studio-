@@ -4,6 +4,7 @@ import { StudioModule } from '../../types';
 import { studioNavigationTools } from './Sidebar';
 
 const searchAliases: Partial<Record<StudioModule, string>> = {
+  openjarvis: 'jarvis ai assistant chat help guide Kannada ಮೊಬೈಲ್ ಸಹಾಯ',
   cartoon_creator: 'anime animation cartoon film',
   ai_wizard: 'movie script to video screenplay',
   ai_voice: 'text to speech narration Kannada',

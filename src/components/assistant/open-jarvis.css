@@ -1,0 +1,58 @@
+.jarvis-view {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  max-width: 1080px;
+  margin-inline: auto;
+  padding: clamp(14px, 3vw, 34px);
+  overflow: auto;
+  color: var(--shell-ink);
+  user-select: text;
+}
+
+.jarvis-title, .jarvis-heading, .jarvis-options, .jarvis-modes, .jarvis-message-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.jarvis-title { justify-content: space-between; align-items: flex-start; gap: 14px; }
+.jarvis-heading h1 { font-size: clamp(1.65rem, 4vw, 2.45rem); line-height: 1.15; font-weight: 750; letter-spacing: -.05em; }
+.jarvis-heading p { margin-top: 5px; color: var(--shell-muted); font-size: .9375rem; }
+.jarvis-mark { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 13px; color: var(--shell-active); background: var(--shell-active-bg); }
+.jarvis-title select { min-height: 40px; padding: 5px; border-radius: 8px; border: 1px solid var(--shell-line); background: var(--shell-pane); color: var(--shell-ink); font-size: .875rem; }
+
+.jarvis-options { align-items: center; flex-wrap: wrap; margin-block: 18px 10px; }
+.jarvis-options a { color: var(--shell-muted); font-size: .875rem; text-decoration: underline; text-underline-offset: 3px; }
+.jarvis-options button, .jarvis-topics button, .jarvis-message-actions button, .jarvis-sign-in button {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 6px 10px;
+  border: 1px solid var(--shell-line); border-radius: 8px; font-size: .875rem;
+  background: var(--shell-pane); color: var(--shell-ink); cursor: pointer;
+}
+.jarvis-options button[aria-pressed="true"], .jarvis-options button:hover:not(:disabled), .jarvis-topics button:hover, .jarvis-message-actions button:hover, .jarvis-sign-in button:hover {
+  border-color: var(--shell-active);
+  background: var(--shell-active-bg);
+  color: var(--shell-active);
+}
+.jarvis-view button:disabled { cursor: default; opacity: .58; }
+.jarvis-chat { min-height: 15rem; max-height: 52dvh; overflow: auto; padding: 14px; border: 1px solid var(--shell-line); border-radius: 12px; background: var(--shell-pane); }
+.jarvis-topics, .jarvis-message-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+.jarvis-chat :is([role="status"], [role="alert"]) { padding-block: 10px; color: var(--shell-muted); }
+.jarvis-sign-in { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.jarvis-message { margin-bottom: 11px; padding: 12px; border: 1px solid var(--shell-line); border-radius: 10px; }
+.jarvis-message[data-role="user"] { background: var(--shell-hover); }
+.jarvis-message > strong { display: block; margin-bottom: 5px; font-size: .875rem; color: var(--shell-active); }
+.jarvis-message > p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.jarvis-message-actions { margin-top: 9px; }
+.jarvis-composer { display: flex; align-items: flex-end; gap: 8px; margin-top: 10px; }
+.jarvis-composer textarea { min-width: 0; flex: 1; resize: vertical; min-height: 58px; padding: 10px; border: 1px solid var(--shell-line); border-radius: 9px; background: var(--shell-pane); color: var(--shell-ink); font-size: 1rem; }
+.jarvis-composer button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 10px; min-height: 44px; border-radius: 8px; color: var(--shell-active); background: var(--shell-active-bg); border: 1px solid var(--shell-active); font-weight: 700; cursor: pointer; }
+.jarvis-install { margin-top: 14px; padding-bottom: env(safe-area-inset-bottom, 0); color: var(--shell-muted); font-size: .875rem; }
+.jarvis-install summary { cursor: pointer; width: fit-content; }
+.jarvis-install svg { display: inline; vertical-align: middle; margin-right: 3px; }
+.jarvis-install p { margin-top: 5px; }
+
+@media (max-width: 500px) {
+  .jarvis-mark { display: none; }
+  .jarvis-chat { max-height: 46dvh; min-height: 12rem; }
+}

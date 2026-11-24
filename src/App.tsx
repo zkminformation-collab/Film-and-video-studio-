@@ -12,6 +12,7 @@ import { StudioSearch } from './components/common/StudioSearch';
 import { StudioDashboard } from './components/dashboard/StudioDashboard';
 import { soundFx } from './utils/audioSynth';
 
+const OpenJarvisStudio = lazy(async () => ({ default: (await import('./components/assistant/OpenJarvisStudio')).OpenJarvisStudio }));
 const FilmStudio = lazy(async () => ({ default: (await import('./components/films/FilmStudio')).FilmStudio }));
 const VideoEditor = lazy(async () => ({ default: (await import('./components/editor/VideoEditor')).VideoEditor }));
 const ScreenplayWriter = lazy(async () => ({ default: (await import('./components/screenplay/ScreenplayWriter')).ScreenplayWriter }));
@@ -81,7 +82,9 @@ function StudioApp() {
       return loaded[0];
     }
   });
-  const [activeModule, setActiveModule] = useState<StudioModule>('dashboard');
+  const [activeModule, setActiveModule] = useState<StudioModule>(() =>
+    new URLSearchParams(window.location.search).get('tool') === 'openjarvis' ? 'openjarvis' : 'dashboard'
+  );
   const [currentPlatform, setCurrentPlatform] = useState<ViewPlatform>('workstation');
   const [theme, setTheme] = useState<StudioTheme>(() => {
     try {
@@ -221,10 +224,24 @@ function StudioApp() {
     persistProjects(INITIAL_FILMS, INITIAL_FILMS[0]);
   };
 
+  const openFilmIdea = (idea: string) => {
+    if (!activeFilm) handleCreateNewFilm();
+    try {
+      localStorage.setItem('fvs_active_flow_prompt', idea);
+    } catch {
+      // Film Maker can still open when storage is unavailable.
+    }
+    handleSelectModule('ai_wizard');
+  };
+
   const handleSelectModule = (mod: StudioModule) => {
     soundFx.playScannerBeep();
     if (mobileMenuOpen) closeMobileMenu();
     setActiveModule(mod);
+    const url = new URL(window.location.href);
+    if (mod === 'openjarvis') url.searchParams.set('tool', 'openjarvis');
+    else if (url.searchParams.get('tool') === 'openjarvis') url.searchParams.delete('tool');
+    if (url.href !== window.location.href) window.history.replaceState(null, '', url);
     setBillingTargetSection(null);
     if (currentPlatform !== 'workstation') {
       setCurrentPlatform('workstation');
@@ -270,9 +287,7 @@ function StudioApp() {
         queueOpen={queueOpen}
         onQueueOpenChange={setQueueOpen}
         onGoHome={() => {
-          setBillingTargetSection(null);
-          setActiveModule('dashboard');
-          setCurrentPlatform('workstation');
+          handleSelectModule('dashboard');
         }}
       />
 
@@ -281,7 +296,7 @@ function StudioApp() {
         <Suspense fallback={<div className="studio-loading" role="status">Loading studio view…</div>}>
           {/* Render Platform-specific Views */}
           {currentPlatform === 'android' && (
-            <AndroidPreview activeFilm={activeFilm || INITIAL_FILMS[0]} />
+            <AndroidPreview activeFilm={activeFilm || INITIAL_FILMS[0]} onOpenAssistant={() => handleSelectModule('openjarvis')} />
           )}
 
           {currentPlatform === 'deliverables' && (
@@ -337,11 +352,8 @@ function StudioApp() {
                 onSwitchPlatform={(plat) => setCurrentPlatform(plat)}
                 billingSection={billingTargetSection}
                 onOpenBillingSection={(section) => {
-                  if (mobileMenuOpen) closeMobileMenu();
-                  soundFx.playScannerBeep();
+                  handleSelectModule('credit_wallet');
                   setBillingTargetSection(section);
-                  setActiveModule('credit_wallet');
-                  setCurrentPlatform('workstation');
                 }}
                 onOpenAdminPricing={() => {
                   if (mobileMenuOpen) closeMobileMenu();
@@ -353,7 +365,7 @@ function StudioApp() {
             </div>
 
             <main inert={mobileMenuOpen} className={`min-w-0 flex-1 flex flex-col overflow-hidden ${theme === 'elevenlabs' ? 'bg-white' : 'bg-slate-950'}`}>
-              {!activeFilm && activeModule !== 'dashboard' && activeModule !== 'settings' && activeModule !== 'media' && activeModule !== 'ai_manager' && activeModule !== 'prompt_library' && activeModule !== 'credit_wallet' && (
+              {!activeFilm && activeModule !== 'dashboard' && activeModule !== 'openjarvis' && activeModule !== 'settings' && activeModule !== 'media' && activeModule !== 'ai_manager' && activeModule !== 'prompt_library' && activeModule !== 'credit_wallet' && (
                 <div className={`flex-1 flex items-center justify-center p-8 ${theme === 'elevenlabs' ? 'bg-white' : 'bg-[#090b11]'}`}>
                   <div className={`max-w-md w-full border rounded-2xl p-6 text-center space-y-4 shadow-xl ${
                     theme === 'elevenlabs' ? 'bg-[#FAFAFB] border-neutral-200 text-neutral-900' : 'bg-[#0d111c] border-slate-800 text-slate-100'
@@ -400,6 +412,10 @@ function StudioApp() {
                   onOpenQueue={() => setQueueOpen(true)}
                   theme={theme}
                 />
+              )}
+
+              {activeModule === 'openjarvis' && (
+                <OpenJarvisStudio onNavigate={handleSelectModule} onUseFilmIdea={openFilmIdea} />
               )}
 
               {/* Core Production */}
