@@ -13,7 +13,7 @@ function endpoint() {
     if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) ||
         (!loopback && !key) || url.username || url.password || url.search || url.hash) return null;
     url.pathname = url.pathname.replace(/\/+$/, '') + '/chat/completions';
-    return { url, model, key };
+    return { url, model, key, englishOnly: process.env.OPENJARVIS_ENGLISH_ONLY === 'true' };
   } catch {
     return null;
   }
@@ -68,7 +68,8 @@ export function openJarvisRouter() {
   });
 
   router.get('/status', (_req, res) => {
-    res.json({ connected: Boolean(endpoint()) });
+    const config = endpoint();
+    res.json({ connected: Boolean(config), englishOnly: config?.englishOnly ?? false });
   });
 
   router.post('/chat', express.json({ limit: '128kb' }), async (req, res) => {
@@ -84,7 +85,7 @@ export function openJarvisRouter() {
     }
     const messages = parseConversation(req.body?.messages);
     const language = req.body?.language;
-    if (!messages || (language !== 'kn' && language !== 'en')) {
+    if (!messages || (language !== 'kn' && language !== 'en') || (config.englishOnly && language !== 'en')) {
       res.status(400).json({ error: 'invalid_conversation' });
       return;
     }
@@ -121,15 +122,24 @@ export function openJarvisRouter() {
       const upstream = await fetch(config.url, {
         method: 'POST',
         headers,
-        signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(45_000)]),
+        signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(115_000)]),
         redirect: 'error',
         body: JSON.stringify({
           model: config.model,
-          messages: [{ role: 'system', content: systemPrompt(language) }, ...messages],
+          messages: [{
+            role: 'system',
+            content: config.englishOnly
+              ? 'You are ZKMAP Studio’s film production assistant. Reply in English. Give a practical answer in at most 80 words.'
+              : systemPrompt(language),
+          }, ...messages],
           stream: false,
           max_tokens: 850,
         }),
       });
+      if (upstream.status === 429) {
+        res.status(429).json({ error: 'assistant_busy' });
+        return;
+      }
       if (!upstream.ok) throw new Error('Upstream request failed');
       const data = await upstream.json() as { choices?: { message?: { content?: unknown } }[] };
       const content = data.choices?.[0]?.message?.content;

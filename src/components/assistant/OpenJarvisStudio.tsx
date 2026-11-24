@@ -11,6 +11,9 @@ const labels = {
     guide: 'Studio ಮಾರ್ಗದರ್ಶಿ',
     model: 'OpenJarvis ಚಾಟ್',
     waiting: 'OpenJarvis ಸಂಪರ್ಕ ಸಿದ್ಧವಾಗಿಲ್ಲ',
+    englishOnly: 'AI ಚಾಟ್ ಇಂಗ್ಲಿಷ್‌ನಲ್ಲಿ ಉತ್ತರಿಸುತ್ತದೆ. ಕನ್ನಡದ ಹಂತಗಳಿಗೆ Studio ಮಾರ್ಗದರ್ಶಿ ಬಳಸಿ.',
+    modelPlaceholder: 'Write a two-shot storyboard about a lantern in a storm.',
+    modelWorking: 'AI ಉತ್ತರ ಸಿದ್ಧವಾಗುತ್ತಿದೆ. ಮೊದಲ ಉತ್ತರಕ್ಕೆ ಸ್ವಲ್ಪ ಹೆಚ್ಚು ಸಮಯ ಬೇಕಾಗಬಹುದು…',
     intro: 'ಕಾರ್ಟೂನ್, ಚಿತ್ರಕಥೆ, ಧ್ವನಿ, VFX ಅಥವಾ MP4 ರೆಂಡರ್‌ಗೆ ಸಹಾಯ ಪಡೆಯಿರಿ.',
     mobile: 'ಮೊಬೈಲ್‌ನಲ್ಲಿ ಸ್ಥಾಪಿಸಿ',
     mobileHelp: 'Android Chrome‌ನಲ್ಲಿ ⋮ → Add to Home screen ಅಥವಾ Install app. iPhone Safari‌ನಲ್ಲಿ Share → Add to Home Screen ಆಯ್ಕೆಮಾಡಿ.',
@@ -33,6 +36,9 @@ const labels = {
     guide: 'Studio Guide',
     model: 'OpenJarvis chat',
     waiting: 'OpenJarvis connection pending',
+    englishOnly: 'AI chat replies in English. For Kannada production steps, use Studio Guide.',
+    modelPlaceholder: 'Write a two-shot storyboard about a lantern in a storm.',
+    modelWorking: 'Preparing a reply. The first request may take longer…',
     intro: 'Get help with cartoons, screenplays, voice, VFX and MP4 rendering.',
     mobile: 'Install on mobile',
     mobileHelp: 'In Android Chrome, open ⋮ and choose Add to Home screen or Install app. On iPhone, use Safari’s Share menu and choose Add to Home Screen.',
@@ -65,7 +71,7 @@ export function OpenJarvisStudio({
 }) {
   const { firebaseUser, openAuthModal } = useAuth();
   const [language, setLanguage] = useState<JarvisLanguage>('kn');
-  const [connected, setConnected] = useState(false);
+  const [backend, setBackend] = useState({ connected: false, englishOnly: false });
   const [mode, setMode] = useState<Mode>('guide');
   const [chats, setChats] = useState<Record<Mode, ChatLine[]>>({ guide: [], model: [] });
   const [prompt, setPrompt] = useState('');
@@ -76,12 +82,14 @@ export function OpenJarvisStudio({
   const chatEnd = useRef<HTMLDivElement>(null);
   const conversation = chats[mode];
   const t = labels[language];
+  const englishChat = mode === 'model' && backend.englishOnly;
+  const composerLabel = englishChat ? t.modelPlaceholder : t.placeholder;
 
   useEffect(() => {
     const request = new AbortController();
     fetch('/api/openjarvis/status', { signal: request.signal })
       .then((response) => response.ok ? response.json() : null)
-      .then((status) => setConnected(status?.connected === true))
+      .then((status) => setBackend({ connected: status?.connected === true, englishOnly: status?.englishOnly === true }))
       .catch(() => {});
     return () => {
       request.abort();
@@ -130,7 +138,7 @@ export function OpenJarvisStudio({
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           messages: next.slice(-9).map(({ role, content }) => ({ role, content })),
-          language,
+          language: englishChat ? 'en' : language,
         }),
       });
       if (request.signal.aborted) return;
@@ -171,18 +179,21 @@ export function OpenJarvisStudio({
           <span className="jarvis-mark"><Bot size={25} /></span>
           <div><h1>OpenJarvis</h1><p>{t.intro}</p></div>
         </div>
-        <select value={language} aria-label="Reply language" onChange={(event) => setLanguage(event.target.value as JarvisLanguage)}>
-          <option value="kn">ಕನ್ನಡ</option><option value="en">English</option>
-        </select>
+        {!englishChat && (
+          <select value={language} aria-label="Reply language" onChange={(event) => setLanguage(event.target.value as JarvisLanguage)}>
+            <option value="kn">ಕನ್ನಡ</option><option value="en">English</option>
+          </select>
+        )}
       </header>
       <div className="jarvis-options">
         <div aria-label="Chat mode" className="jarvis-modes">
           <button type="button" aria-pressed={mode === 'guide'} disabled={busy} onClick={() => { setMode('guide'); setError(''); setNotice(''); }}>{t.guide}</button>
-          <button type="button" aria-pressed={mode === 'model'} disabled={!connected || busy} title={connected ? undefined : t.waiting} onClick={() => { setMode('model'); setError(''); setNotice(''); }}>{t.model}</button>
+          <button type="button" aria-pressed={mode === 'model'} disabled={!backend.connected || busy} title={backend.connected ? undefined : t.waiting} onClick={() => { setMode('model'); setError(''); setNotice(''); }}>{t.model}</button>
         </div>
-        {connected ? null : <a href="https://github.com/open-jarvis/OpenJarvis" target="_blank" rel="noreferrer">{t.waiting}</a>}
+        {backend.connected ? null : <a href="https://github.com/open-jarvis/OpenJarvis" target="_blank" rel="noreferrer">{t.waiting}</a>}
         {conversation.length > 0 || busy ? <button type="button" onClick={resetConversation}><SquarePen size={16} /> {t.reset}</button> : null}
       </div>
+      {englishChat && <p className="jarvis-language-note">{t.englishOnly}</p>}
       <div className="jarvis-chat" aria-label={t.model}>
         {mode === 'model' && !firebaseUser && (
           <div className="jarvis-sign-in"><p>{t.signIn}</p><button type="button" onClick={openAuthModal}>{t.signInAction}</button></div>
@@ -207,12 +218,12 @@ export function OpenJarvisStudio({
             </article>
           ))}
         </div>
-        {busy && <p role="status">{t.working}</p>}
+        {busy && <p role="status">{mode === 'model' ? t.modelWorking : t.working}</p>}
         {error && <p role="alert">{error}</p>}
         <div ref={chatEnd} />
       </div>
       <form className="jarvis-composer" onSubmit={(event) => { event.preventDefault(); void submit(prompt); }}>
-        <textarea rows={2} maxLength={2000} placeholder={t.placeholder} aria-label={t.placeholder} value={prompt}
+        <textarea rows={2} maxLength={2000} placeholder={composerLabel} aria-label={composerLabel} value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {

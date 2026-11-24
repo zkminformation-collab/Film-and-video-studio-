@@ -56,3 +56,5 @@
   .jarvis-mark { display: none; }
   .jarvis-chat { max-height: 46dvh; min-height: 12rem; }
 }
+
+.jarvis-language-note { margin-bottom: 8px; color: var(--shell-muted); font-size: .875rem; }

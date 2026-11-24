@@ -32,6 +32,8 @@ For a production build, run `bun run build` and start the server with `NODE_ENV=
 
 Open [the assistant](https://zkmapstudio.onrender.com/?tool=openjarvis) from the sidebar or command search. Studio Guide offers built-in Kannada and English instructions. OpenJarvis Chat forwards the signed-in user's conversation to a configured OpenJarvis server.
 
+The hosted chat uses a small [SmolLM2-360M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct) model served by llama.cpp through OpenJarvis. It is configured for short English replies. Studio Guide continues to offer Kannada and English production instructions. The first chat after the free inference service has gone idle can take longer.
+
 Install the ZKMAP Studio web app from Android Chrome's **Add to Home screen** or **Install app** menu, or from iPhone Safari's **Add to Home Screen** share action. The installed app uses the same studio, including the OpenJarvis shortcut.
 
 ### Connect an OpenJarvis server
@@ -44,3 +46,6 @@ uv tool run --from 'OpenJarvis[server]==1.0.4' jarvis serve \
 ```
 
 Set `OPENJARVIS_BASE_URL=http://127.0.0.1:8000/v1` and `OPENJARVIS_MODEL` to the model passed to `jarvis serve`. For the hosted studio, first deploy an [OpenJarvis server](https://open-jarvis.github.io/OpenJarvis/deployment/render/) with your inference provider or self-host an Ollama-backed instance. In the studio's server environment, set `OPENJARVIS_BASE_URL` to its HTTPS URL ending in `/v1`, `OPENJARVIS_MODEL` to its served model, and `OPENJARVIS_API_KEY` to the server's bearer key. Deploy the updated environment and open the OpenJarvis Chat tab as a signed-in user.
+
+
+The included `deploy/openjarvis/Dockerfile` builds the CPU-only inference service. Use `deploy/openjarvis` as its Docker context and set a randomly generated `OPENJARVIS_API_KEY` of at least 32 characters on both services. Set the studio's `OPENJARVIS_MODEL=smollm2-360m-instruct` and `OPENJARVIS_ENGLISH_ONLY=true` for this model. The Apache-2.0 model uses the [IQ4_XS conversion by bartowski](https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF).
