@@ -90,7 +90,7 @@ def main():
         executable, "--host", "127.0.0.1", "--port", "8419", "--model", model_file,
         "--alias", MODEL, "--ctx-size", "1536", "--batch-size", "32", "--ubatch-size", "32",
         "--parallel", "1", "--threads", "1", "--n-gpu-layers", "0", "--no-ui",
-        "--cache-ram", "0", "--no-cache-prompt",
+        "--cache-ram", "0", "--no-cache-prompt", "--no-repack",
     ])
     try:
         deadline = time.monotonic() + 75
