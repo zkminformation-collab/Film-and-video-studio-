@@ -1,16 +1,19 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   Bell,
-  PanelLeft,
   Volume2,
   RotateCcw,
   UserCheck,
   Sun,
   Moon,
+  Menu,
+  Search,
 } from 'lucide-react';
 import { ViewPlatform, FilmProject, StudioTheme } from '../../types';
 import { useStudioAi } from '../../context/StudioAiContext';
 import { useAuth } from '../../context/AuthContext';
+import { BRAND_CONFIG } from '../../config/brand';
+import studioLogo from '../../assets/images/studio-wordmark.webp';
 import { soundFx } from '../../utils/audioSynth';
 
 interface HeaderProps {
@@ -21,9 +24,12 @@ interface HeaderProps {
   allFilms: FilmProject[];
   theme: StudioTheme;
   onSelectTheme: (theme: StudioTheme) => void;
-  sidebarCollapsed?: boolean;
-  onToggleSidebar?: () => void;
   onGoHome?: () => void;
+  mobileMenuOpen: boolean;
+  onOpenMobileMenu: () => void;
+  onOpenSearch: () => void;
+  queueOpen: boolean;
+  onQueueOpenChange: (open: boolean) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -34,13 +40,32 @@ export const Header: React.FC<HeaderProps> = ({
   allFilms,
   theme,
   onSelectTheme,
-  sidebarCollapsed,
-  onToggleSidebar,
   onGoHome,
+  mobileMenuOpen,
+  onOpenMobileMenu,
+  onOpenSearch,
+  queueOpen,
+  onQueueOpenChange,
 }) => {
   const { queue, isReprocessing, reprocessAllPending } = useStudioAi();
   const { account, openAuthModal } = useAuth();
-  const [notifOpen, setNotifOpen] = useState(false);
+  const queueContainer = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!queueOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !queueContainer.current?.contains(event.target)) onQueueOpenChange(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onQueueOpenChange(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [queueOpen, onQueueOpenChange]);
 
   const pendingCount = queue.filter((i) => i.status === 'Queued' || i.status === 'Failed').length;
   const isLight = theme === 'elevenlabs';
@@ -55,29 +80,28 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header
-      className={`h-14 border-b px-4 flex items-center justify-between gap-4 shrink-0 z-40 select-none transition-colors ${
+      inert={mobileMenuOpen}
+      className={`studio-header h-15 border-b px-2.5 sm:px-4 flex items-center justify-between gap-2 sm:gap-4 shrink-0 z-40 select-none transition-colors ${
         isLight
           ? 'bg-white border-neutral-200 text-neutral-900'
-          : 'bg-slate-950/95 border-slate-800 text-slate-100'
+          : 'bg-[#171b1c] border-[#303738] text-slate-100'
       }`}
     >
       {/* Zone 1: Brand Title & Sidebar Collapse */}
-      <div className="flex items-center gap-3 shrink-0">
-        {currentPlatform === 'workstation' && onToggleSidebar && (
+      <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
+        {currentPlatform === 'workstation' && (
           <button
+            id="studio-menu-trigger"
             type="button"
-            onClick={onToggleSidebar}
-            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className={`p-1.5 rounded-lg transition-colors ${
-              isLight
-                ? 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
-                : 'text-slate-400 hover:text-white hover:bg-slate-900'
-            }`}
+            className="studio-header-icon lg:hidden"
+            aria-label="Open studio menu"
+            aria-expanded={mobileMenuOpen}
+            aria-controls="studio-module-menu"
+            onClick={onOpenMobileMenu}
           >
-            <PanelLeft className="w-4 h-4" />
+            <Menu size={20} />
           </button>
         )}
-
         <a
           href="/"
           aria-label="ZKMAP STUDIO Home"
@@ -90,27 +114,21 @@ export const Header: React.FC<HeaderProps> = ({
               onSelectPlatform('workstation');
             }
           }}
-          className="flex items-center gap-2.5 shrink-0 cursor-pointer whitespace-nowrap group"
+          className="flex items-center gap-2 min-w-0 cursor-pointer whitespace-nowrap"
         >
-          <img
-            src="/images/zkmap-studio-logo.png"
-            alt="ZKMAP STUDIO"
-            className="h-9 sm:h-10 w-auto max-w-[160px] sm:max-w-[220px] rounded-lg object-contain border border-neutral-800/30 shadow-sm cursor-pointer transition-transform group-hover:scale-[1.02]"
-          />
-          <div className="flex flex-col leading-tight">
-            <span
-              className={`text-xs sm:text-sm font-bold tracking-tight whitespace-nowrap ${
-                isLight ? 'text-neutral-950' : 'text-white'
-              }`}
-            >
-              ZKMAP STUDIO
-            </span>
-          </div>
+          <img src={studioLogo} alt="" className="h-8 w-10 sm:h-9 sm:w-12 rounded-md object-cover shrink-0" />
+          <span className="studio-wordmark">{BRAND_CONFIG.name}</span>
         </a>
       </div>
 
-      {/* Zone 3: Project Picker, Theme Toggle, Queue Bell & Account Avatar */}
-      <div className="flex items-center gap-2.5 shrink-0 relative">
+      <button type="button" onClick={onOpenSearch} className="studio-search-trigger" aria-label="Find a studio tool" aria-haspopup="dialog" title="Find a studio tool (Ctrl/Cmd + K)">
+        <Search size={18} />
+        <span>Find a studio tool</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+
+      {/* Project picker, theme, queue and account */}
+      <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 relative">
         {pendingCount > 0 && (
           <button
             type="button"
@@ -184,7 +202,7 @@ export const Header: React.FC<HeaderProps> = ({
           }}
           title="Test studio audio monitor"
           aria-label="Test audio monitor"
-          className={`p-2 rounded-lg border transition-colors ${
+          className={`hidden sm:block p-2 rounded-lg border transition-colors ${
             isLight
               ? 'bg-white border-neutral-200 text-neutral-700 hover:bg-neutral-100'
               : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
@@ -194,10 +212,11 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         {/* Notifications / Render Queue Bell */}
-        <div className="relative">
+        <div className="relative" ref={queueContainer}>
           <button
             type="button"
-            onClick={() => setNotifOpen((o) => !o)}
+            onClick={() => onQueueOpenChange(!queueOpen)}
+            aria-expanded={queueOpen}
             aria-label="Studio notifications and render queue"
             className={`p-2 rounded-lg border transition-colors relative ${
               isLight
@@ -211,9 +230,9 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
-          {notifOpen && (
+          {queueOpen && (
             <div
-              className={`absolute right-0 mt-2 w-72 rounded-2xl border shadow-xl p-3 space-y-2 z-50 ${
+              className={`absolute -right-9 sm:right-0 mt-2 w-[min(18rem,calc(100vw-1.5rem))] rounded-2xl border shadow-xl p-3 space-y-2 z-50 ${
                 isLight
                   ? 'bg-white border-neutral-200 text-neutral-900'
                   : 'bg-slate-900 border-slate-700 text-slate-100'
@@ -235,7 +254,7 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="max-h-56 overflow-y-auto space-y-1.5">
                 {queue.length === 0 ? (
                   <p className="text-xs text-neutral-500 py-3 text-center">
-                    All workflows completed cleanly.
+                    No render jobs yet.
                   </p>
                 ) : (
                   queue.slice(0, 5).map((item) => (
@@ -264,11 +283,12 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           type="button"
           onClick={openAuthModal}
-          className={`flex items-center gap-2 pl-1.5 pr-3 py-1 rounded-full border text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+          className={`flex items-center gap-2 px-1.5 md:pr-3 py-1 rounded-full border text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
             isLight
               ? 'bg-white border-neutral-200 hover:border-neutral-400 text-neutral-900'
               : 'bg-slate-900 border-slate-700 hover:border-slate-500 text-slate-100'
           }`}
+          aria-label={account ? 'Open account' : 'Sign in'}
           title={account ? `${account.displayName} (${account.plan})` : 'Sign in or register'}
         >
           <span

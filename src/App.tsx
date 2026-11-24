@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { StudioModule, ViewPlatform, FilmProject, StudioTheme } from './types';
 import { INITIAL_FILMS } from './data/initialData';
 import { StudioAiProvider, useStudioAi } from './context/StudioAiContext';
@@ -8,43 +8,46 @@ import { AuthModal } from './components/auth/AuthModal';
 import { CostApprovalModal } from './components/wallet/CostApprovalModal';
 import { Header } from './components/common/Header';
 import { Sidebar } from './components/common/Sidebar';
+import { StudioSearch } from './components/common/StudioSearch';
 import { StudioDashboard } from './components/dashboard/StudioDashboard';
-import { FilmStudio } from './components/films/FilmStudio';
-import { VideoEditor } from './components/editor/VideoEditor';
-import { ScreenplayWriter } from './components/screenplay/ScreenplayWriter';
-import { StoryboardStudio } from './components/storyboard/StoryboardStudio';
-import { CameraStudio } from './components/camera/CameraStudio';
-import { AudioStudio } from './components/audio/AudioStudio';
-import { AnimationStudio } from './components/animation/AnimationStudio';
-import { VfxStudio } from './components/vfx/VfxStudio';
-import { SubtitleStudio } from './components/subtitles/SubtitleStudio';
-import { MediaLibrary } from './components/media/MediaLibrary';
-import { ExportStudio } from './components/export/ExportStudio';
-import { TeamStudio } from './components/team/TeamStudio';
-import { SettingsStudio } from './components/settings/SettingsStudio';
-import { AiVideoGenerator } from './components/ai/AiVideoGenerator';
-import { AiImageGenerator } from './components/ai/AiImageGenerator';
-import { CharacterCreator } from './components/ai/CharacterCreator';
-import { AiVoiceStudio } from './components/ai/AiVoiceStudio';
-import { ColorGradingStudio } from './components/color/ColorGradingStudio';
-import { CloudStorageStudio } from './components/cloud/CloudStorageStudio';
-import { AiFilmWizard } from './components/ai/AiFilmWizard';
-import { AiCentralManager } from './components/ai/AiCentralManager';
-import { PromptLibraryStudio } from './components/ai/PromptLibraryStudio';
-import { CreditWalletStudio } from './components/wallet/CreditWalletStudio';
-import { AndroidPreview } from './components/views/AndroidPreview';
-import { WebsitePortal } from './components/views/WebsitePortal';
-import { AdminPanel } from './components/views/AdminPanel';
-import { WordPressIntegration } from './components/views/WordPressIntegration';
-import { CodeExplorer } from './components/views/CodeExplorer';
-import { DeliverablesPanel } from './components/views/DeliverablesPanel';
-import { SocialMediaStudio } from './components/social/SocialMediaStudio';
-import { BloggerStudio } from './components/blogger/BloggerStudio';
-import { ManhwaStudio } from './components/manhwa/ManhwaStudio';
-import { CartoonCreatorStudio } from './components/cartoon/CartoonCreatorStudio';
 import { soundFx } from './utils/audioSynth';
 
+const FilmStudio = lazy(async () => ({ default: (await import('./components/films/FilmStudio')).FilmStudio }));
+const VideoEditor = lazy(async () => ({ default: (await import('./components/editor/VideoEditor')).VideoEditor }));
+const ScreenplayWriter = lazy(async () => ({ default: (await import('./components/screenplay/ScreenplayWriter')).ScreenplayWriter }));
+const StoryboardStudio = lazy(async () => ({ default: (await import('./components/storyboard/StoryboardStudio')).StoryboardStudio }));
+const CameraStudio = lazy(async () => ({ default: (await import('./components/camera/CameraStudio')).CameraStudio }));
+const AudioStudio = lazy(async () => ({ default: (await import('./components/audio/AudioStudio')).AudioStudio }));
+const AnimationStudio = lazy(async () => ({ default: (await import('./components/animation/AnimationStudio')).AnimationStudio }));
+const VfxStudio = lazy(async () => ({ default: (await import('./components/vfx/VfxStudio')).VfxStudio }));
+const SubtitleStudio = lazy(async () => ({ default: (await import('./components/subtitles/SubtitleStudio')).SubtitleStudio }));
+const MediaLibrary = lazy(async () => ({ default: (await import('./components/media/MediaLibrary')).MediaLibrary }));
+const ExportStudio = lazy(async () => ({ default: (await import('./components/export/ExportStudio')).ExportStudio }));
+const TeamStudio = lazy(async () => ({ default: (await import('./components/team/TeamStudio')).TeamStudio }));
+const SettingsStudio = lazy(async () => ({ default: (await import('./components/settings/SettingsStudio')).SettingsStudio }));
+const AiVideoGenerator = lazy(async () => ({ default: (await import('./components/ai/AiVideoGenerator')).AiVideoGenerator }));
+const AiImageGenerator = lazy(async () => ({ default: (await import('./components/ai/AiImageGenerator')).AiImageGenerator }));
+const CharacterCreator = lazy(async () => ({ default: (await import('./components/ai/CharacterCreator')).CharacterCreator }));
+const AiVoiceStudio = lazy(async () => ({ default: (await import('./components/ai/AiVoiceStudio')).AiVoiceStudio }));
+const ColorGradingStudio = lazy(async () => ({ default: (await import('./components/color/ColorGradingStudio')).ColorGradingStudio }));
+const CloudStorageStudio = lazy(async () => ({ default: (await import('./components/cloud/CloudStorageStudio')).CloudStorageStudio }));
+const AiFilmWizard = lazy(async () => ({ default: (await import('./components/ai/AiFilmWizard')).AiFilmWizard }));
+const AiCentralManager = lazy(async () => ({ default: (await import('./components/ai/AiCentralManager')).AiCentralManager }));
+const PromptLibraryStudio = lazy(async () => ({ default: (await import('./components/ai/PromptLibraryStudio')).PromptLibraryStudio }));
+const CreditWalletStudio = lazy(async () => ({ default: (await import('./components/wallet/CreditWalletStudio')).CreditWalletStudio }));
+const SocialMediaStudio = lazy(async () => ({ default: (await import('./components/social/SocialMediaStudio')).SocialMediaStudio }));
+const BloggerStudio = lazy(async () => ({ default: (await import('./components/blogger/BloggerStudio')).BloggerStudio }));
+const ManhwaStudio = lazy(async () => ({ default: (await import('./components/manhwa/ManhwaStudio')).ManhwaStudio }));
+const CartoonCreatorStudio = lazy(async () => ({ default: (await import('./components/cartoon/CartoonCreatorStudio')).CartoonCreatorStudio }));
+const AndroidPreview = lazy(async () => ({ default: (await import('./components/views/AndroidPreview')).AndroidPreview }));
+const WebsitePortal = lazy(async () => ({ default: (await import('./components/views/WebsitePortal')).WebsitePortal }));
+const AdminPanel = lazy(async () => ({ default: (await import('./components/views/AdminPanel')).AdminPanel }));
+const WordPressIntegration = lazy(async () => ({ default: (await import('./components/views/WordPressIntegration')).WordPressIntegration }));
+const CodeExplorer = lazy(async () => ({ default: (await import('./components/views/CodeExplorer')).CodeExplorer }));
+const DeliverablesPanel = lazy(async () => ({ default: (await import('./components/views/DeliverablesPanel')).DeliverablesPanel }));
+
 const STORAGE_FILMS_KEY = 'fvs_autosave_films_v1';
+const STUDIO_THEME_KEY = 'fvs_studio_theme';
 const STORAGE_ACTIVE_FILM_KEY = 'fvs_autosave_active_film_v1';
 
 function loadSavedFilms(): FilmProject[] {
@@ -80,7 +83,20 @@ function StudioApp() {
   });
   const [activeModule, setActiveModule] = useState<StudioModule>('dashboard');
   const [currentPlatform, setCurrentPlatform] = useState<ViewPlatform>('workstation');
-  const [theme, setTheme] = useState<StudioTheme>('elevenlabs');
+  const [theme, setTheme] = useState<StudioTheme>(() => {
+    try {
+      const savedTheme = localStorage.getItem(STUDIO_THEME_KEY);
+      if (savedTheme === 'elevenlabs' || savedTheme === 'creative' || savedTheme === 'cinematic' || savedTheme === 'premiere') {
+        return savedTheme;
+      }
+    } catch {
+      // Use the default theme when storage is unavailable.
+    }
+    return 'creative';
+  });
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [studioSearchOpen, setStudioSearchOpen] = useState(false);
+  const [queueOpen, setQueueOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [billingTargetSection, setBillingTargetSection] = useState<
     'my-credits' | 'buy-credits' | 'my-subscription' | null
@@ -88,6 +104,37 @@ function StudioApp() {
   const [adminInitialTab, setAdminInitialTab] = useState<
     'ledger' | 'pricing' | 'users' | 'usage' | 'apis'
   >('ledger');
+
+  useEffect(() => {
+    const desktop = window.matchMedia('(min-width: 1024px)');
+    const closeOnDesktop = (event: MediaQueryListEvent) => {
+      if (event.matches) setMobileMenuOpen(false);
+    };
+    desktop.addEventListener('change', closeOnDesktop);
+    return () => desktop.removeEventListener('change', closeOnDesktop);
+  }, []);
+
+  useEffect(() => {
+    if (mobileMenuOpen) document.querySelector<HTMLElement>('[data-close-studio-menu]')?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (mobileMenuOpen && event.key === 'Escape') {
+        event.preventDefault();
+        closeMobileMenu();
+      }
+      if (!mobileMenuOpen && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setQueueOpen(false);
+        setStudioSearchOpen(true);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [mobileMenuOpen]);
+
+  function closeMobileMenu() {
+    setMobileMenuOpen(false);
+    requestAnimationFrame(() => document.getElementById('studio-menu-trigger')?.focus());
+  }
 
   const persistProjects = (nextFilms: FilmProject[], nextActive: FilmProject | null) => {
     try {
@@ -176,14 +223,16 @@ function StudioApp() {
 
   const handleSelectModule = (mod: StudioModule) => {
     soundFx.playScannerBeep();
+    if (mobileMenuOpen) closeMobileMenu();
     setActiveModule(mod);
+    setBillingTargetSection(null);
     if (currentPlatform !== 'workstation') {
       setCurrentPlatform('workstation');
     }
   };
 
   return (
-    <div className={`flex flex-col h-screen w-screen overflow-hidden select-none ${
+    <div data-studio-light={theme === 'elevenlabs'} className={`studio-shell flex flex-col h-dvh w-full overflow-hidden ${
       theme === 'elevenlabs'
         ? 'bg-white text-neutral-950'
         : theme === 'creative'
@@ -209,9 +258,17 @@ function StudioApp() {
         onSelectTheme={(t) => {
           soundFx.playScannerBeep();
           setTheme(t);
+          try {
+            localStorage.setItem(STUDIO_THEME_KEY, t);
+          } catch {
+            // The selected theme still applies to this session.
+          }
         }}
-        sidebarCollapsed={sidebarCollapsed}
-        onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+        mobileMenuOpen={mobileMenuOpen}
+        onOpenMobileMenu={() => { setQueueOpen(false); setMobileMenuOpen(true); }}
+        onOpenSearch={() => { setQueueOpen(false); setStudioSearchOpen(true); }}
+        queueOpen={queueOpen}
+        onQueueOpenChange={setQueueOpen}
         onGoHome={() => {
           setBillingTargetSection(null);
           setActiveModule('dashboard');
@@ -220,69 +277,83 @@ function StudioApp() {
       />
 
       {/* Main Studio Viewport */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Render Platform-specific Views */}
-        {currentPlatform === 'android' && (
-          <AndroidPreview activeFilm={activeFilm || INITIAL_FILMS[0]} />
-        )}
+      <div className="flex-1 min-h-0 flex overflow-hidden">
+        <Suspense fallback={<div className="studio-loading" role="status">Loading studio view…</div>}>
+          {/* Render Platform-specific Views */}
+          {currentPlatform === 'android' && (
+            <AndroidPreview activeFilm={activeFilm || INITIAL_FILMS[0]} />
+          )}
 
-        {currentPlatform === 'deliverables' && (
-          <DeliverablesPanel />
-        )}
+          {currentPlatform === 'deliverables' && (
+            <DeliverablesPanel />
+          )}
 
-        {currentPlatform === 'website' && (
-          <WebsitePortal
-            allFilms={films}
-            onOpenWorkstation={() => setCurrentPlatform('workstation')}
-            onOpenModule={handleSelectModule}
-            onOpenAdmin={() => setCurrentPlatform('admin')}
-          />
-        )}
+          {currentPlatform === 'website' && (
+            <WebsitePortal
+              allFilms={films}
+              onOpenWorkstation={() => setCurrentPlatform('workstation')}
+              onOpenModule={handleSelectModule}
+              onOpenAdmin={() => setCurrentPlatform('admin')}
+            />
+          )}
 
-        {currentPlatform === 'admin' && (
-          <AdminPanel
-            allFilms={films}
-            onSelectFilm={handleSelectFilm}
-            onDeleteFilm={handleDeleteFilm}
-            onOpenWorkstation={() => setCurrentPlatform('workstation')}
-            initialTab={adminInitialTab}
-          />
-        )}
+          {currentPlatform === 'admin' && (
+            <AdminPanel
+              allFilms={films}
+              onSelectFilm={handleSelectFilm}
+              onDeleteFilm={handleDeleteFilm}
+              onOpenWorkstation={() => setCurrentPlatform('workstation')}
+              initialTab={adminInitialTab}
+            />
+          )}
 
-        {currentPlatform === 'wordpress' && (
-          <WordPressIntegration activeFilm={activeFilm || INITIAL_FILMS[0]} />
-        )}
+          {currentPlatform === 'wordpress' && (
+            <WordPressIntegration activeFilm={activeFilm || INITIAL_FILMS[0]} />
+          )}
 
-        {currentPlatform === 'code_viewer' && (
-          <CodeExplorer />
-        )}
+          {currentPlatform === 'code_viewer' && (
+            <CodeExplorer />
+          )}
+        </Suspense>
 
         {/* Workstation Desktop Mode: Sidebar + Selected Studio Module */}
         {currentPlatform === 'workstation' && (
           <>
-            <Sidebar
-              activeModule={activeModule}
-              onSelectModule={handleSelectModule}
-              theme={theme}
-              collapsed={sidebarCollapsed}
-              onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
-              onSwitchPlatform={(plat) => setCurrentPlatform(plat)}
-              billingSection={billingTargetSection}
-              onOpenBillingSection={(section) => {
-                soundFx.playScannerBeep();
-                setBillingTargetSection(section);
-                setActiveModule('credit_wallet');
-                setCurrentPlatform('workstation');
-              }}
-              onOpenAdminPricing={() => {
-                soundFx.playScannerBeep();
-                setAdminInitialTab('pricing');
-                setCurrentPlatform('admin');
-              }}
-            />
+            {mobileMenuOpen && <div className="studio-menu-backdrop lg:hidden" onClick={closeMobileMenu} />}
+            <div
+              id="studio-module-menu"
+              className={`studio-sidebar-region shrink-0 ${mobileMenuOpen ? 'block' : 'hidden'} lg:block`}
+              role={mobileMenuOpen ? 'dialog' : undefined}
+              aria-modal={mobileMenuOpen || undefined}
+              aria-label={mobileMenuOpen ? 'Studio menu' : undefined}
+            >
+              <Sidebar
+                activeModule={activeModule}
+                onSelectModule={handleSelectModule}
+                theme={theme}
+                collapsed={sidebarCollapsed && !mobileMenuOpen}
+                onCloseMobile={closeMobileMenu}
+                onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+                onSwitchPlatform={(plat) => setCurrentPlatform(plat)}
+                billingSection={billingTargetSection}
+                onOpenBillingSection={(section) => {
+                  if (mobileMenuOpen) closeMobileMenu();
+                  soundFx.playScannerBeep();
+                  setBillingTargetSection(section);
+                  setActiveModule('credit_wallet');
+                  setCurrentPlatform('workstation');
+                }}
+                onOpenAdminPricing={() => {
+                  if (mobileMenuOpen) closeMobileMenu();
+                  soundFx.playScannerBeep();
+                  setAdminInitialTab('pricing');
+                  setCurrentPlatform('admin');
+                }}
+              />
+            </div>
 
-            <main className={`flex-1 flex flex-col overflow-hidden ${theme === 'elevenlabs' ? 'bg-white' : 'bg-slate-950'}`}>
-              {!activeFilm && activeModule !== 'settings' && activeModule !== 'media' && activeModule !== 'ai_manager' && activeModule !== 'prompt_library' && activeModule !== 'credit_wallet' && (
+            <main inert={mobileMenuOpen} className={`min-w-0 flex-1 flex flex-col overflow-hidden ${theme === 'elevenlabs' ? 'bg-white' : 'bg-slate-950'}`}>
+              {!activeFilm && activeModule !== 'dashboard' && activeModule !== 'settings' && activeModule !== 'media' && activeModule !== 'ai_manager' && activeModule !== 'prompt_library' && activeModule !== 'credit_wallet' && (
                 <div className={`flex-1 flex items-center justify-center p-8 ${theme === 'elevenlabs' ? 'bg-white' : 'bg-[#090b11]'}`}>
                   <div className={`max-w-md w-full border rounded-2xl p-6 text-center space-y-4 shadow-xl ${
                     theme === 'elevenlabs' ? 'bg-[#FAFAFB] border-neutral-200 text-neutral-900' : 'bg-[#0d111c] border-slate-800 text-slate-100'
@@ -315,15 +386,18 @@ function StudioApp() {
                 </div>
               )}
 
+              <Suspense fallback={<div className="studio-loading" role="status">Loading studio tool…</div>}>
               {/* Home Dashboard */}
-              {activeFilm && activeModule === 'dashboard' && (
+              {activeModule === 'dashboard' && (
                 <StudioDashboard
                   activeFilm={activeFilm}
                   allFilms={films}
                   onSelectFilm={handleSelectFilm}
                   onDeleteFilm={handleDeleteFilm}
                   onCreateNewFilm={handleCreateNewFilm}
+                  onRestoreSampleFilms={handleRestoreSampleFilms}
                   onNavigate={handleSelectModule}
+                  onOpenQueue={() => setQueueOpen(true)}
                   theme={theme}
                 />
               )}
@@ -498,6 +572,7 @@ function StudioApp() {
                   }}
                 />
               )}
+              </Suspense>
             </main>
           </>
         )}
@@ -505,6 +580,7 @@ function StudioApp() {
 
       {/* Global Cost Approval & Account Auth Modals */}
       <CostApprovalModal />
+      {studioSearchOpen && <StudioSearch onClose={() => setStudioSearchOpen(false)} onSelect={handleSelectModule} />}
       <AuthModal />
     </div>
   );

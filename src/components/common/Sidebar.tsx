@@ -3,7 +3,7 @@ import {
   LayoutGrid,
   Mic2,
   AudioLines,
-  GitBranch,
+  House,
   Clapperboard,
   FolderOpen,
   BookOpen,
@@ -29,6 +29,7 @@ import {
   PinOff,
   Plus,
   PanelLeft,
+  X,
   ChevronDown,
   Lock,
   Coins,
@@ -46,6 +47,7 @@ interface SidebarProps {
   theme: StudioTheme;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  onCloseMobile: () => void;
   onSwitchPlatform?: (platform: ViewPlatform) => void;
   billingSection?: BillingSectionTarget | null;
   onOpenBillingSection?: (section: BillingSectionTarget) => void;
@@ -64,14 +66,14 @@ const PRIMARY_ITEMS: Array<{
   icon: React.ElementType;
   hasQuickAdd?: boolean;
 }> = [
-  { id: 'dashboard', label: 'Home & Flows', icon: GitBranch },
+  { id: 'dashboard', label: 'Overview', icon: House },
   { id: 'cartoon_creator', label: 'AI Cartoon Creator', icon: Clapperboard },
-  { id: 'ai_voice', label: 'AI Studios · Voices', icon: Mic2, hasQuickAdd: true },
-  { id: 'editor', label: 'Studio', icon: Film },
+  { id: 'ai_voice', label: 'Voice Studio', icon: Mic2, hasQuickAdd: true },
+  { id: 'editor', label: 'Timeline Editor', icon: Film },
   { id: 'ai_wizard', label: 'AI Film Maker', icon: Sparkles },
   { id: 'films', label: 'My Projects', icon: Clapperboard },
-  { id: 'media', label: 'My Library', icon: FolderOpen },
-  { id: 'prompt_library', label: 'Apps & Templates', icon: LayoutGrid },
+  { id: 'media', label: 'Asset Library', icon: FolderOpen },
+  { id: 'prompt_library', label: 'Prompt Library', icon: LayoutGrid },
 ];
 
 const ALL_STUDIO_TOOLS: SidebarTool[] = [
@@ -79,7 +81,7 @@ const ALL_STUDIO_TOOLS: SidebarTool[] = [
   { id: 'ai_voice', label: 'Text to Speech', icon: AudioLines },
   { id: 'character', label: 'Voice Creation', icon: Mic2 },
   { id: 'audio', label: 'Sound Effects & Music', icon: Volume2 },
-  { id: 'ai_video', label: 'Image & Video', icon: Film },
+  { id: 'ai_video', label: 'AI Video Generator', icon: Film },
   { id: 'manhwa_studio', label: 'Manhwa Studio', icon: BookOpen },
   { id: 'ai_image', label: 'AI Image Studio', icon: ImageIcon },
   { id: 'subtitles', label: 'Dubbing & Subtitles', icon: Languages },
@@ -96,10 +98,12 @@ const ALL_STUDIO_TOOLS: SidebarTool[] = [
   { id: 'credit_wallet', label: 'Credits & Plans', icon: Wallet },
   { id: 'team', label: 'Team & Call Sheets', icon: Users },
   { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'ai_manager', label: 'AI Control Center', icon: Sparkles },
 ];
 
+export const studioNavigationTools = [...new Map([...ALL_STUDIO_TOOLS, ...PRIMARY_ITEMS].map((tool) => [tool.id, tool])).values()];
+
 const DEFAULT_PINNED_IDS: StudioModule[] = [
-  'ai_voice',
   'character',
   'audio',
   'ai_video',
@@ -107,7 +111,6 @@ const DEFAULT_PINNED_IDS: StudioModule[] = [
   'ai_image',
   'subtitles',
   'export',
-  'credit_wallet',
 ];
 
 const PINNED_STORAGE_KEY = 'fvs_sidebar_pinned_v1';
@@ -118,6 +121,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   theme,
   collapsed = false,
   onToggleCollapse,
+  onCloseMobile,
   billingSection = null,
   onOpenBillingSection,
   onOpenAdminPricing,
@@ -129,7 +133,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const saved = localStorage.getItem(PINNED_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {
       // ignore storage errors
@@ -153,85 +157,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setPinnedIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
   };
 
-  const pinnedTools = ALL_STUDIO_TOOLS.filter((t) => pinnedIds.includes(t.id));
-  const moreTools = ALL_STUDIO_TOOLS.filter((t) => !pinnedIds.includes(t.id));
+  const additionalTools = ALL_STUDIO_TOOLS.filter(({ id }) =>
+    id !== 'credit_wallet' && id !== 'settings' && !PRIMARY_ITEMS.some((item) => item.id === id)
+  );
+  const pinnedTools = additionalTools.filter((tool) => pinnedIds.includes(tool.id));
+  const moreTools = additionalTools.filter((tool) => !pinnedIds.includes(tool.id));
   const isLight = theme === 'elevenlabs';
 
   return (
     <aside
-      className={`${
-        collapsed ? 'w-16' : 'w-64'
-      } border-r flex flex-col shrink-0 select-none relative transition-all duration-200 ${
-        isLight
-          ? 'bg-[#FAFAFB] border-neutral-200 text-neutral-900'
-          : 'bg-[#0b0d13] border-slate-800 text-slate-100'
-      }`}
+      className={`studio-sidebar h-full ${collapsed ? 'lg:w-16' : 'lg:w-60'} w-full border-r flex flex-col select-none relative`}
+      data-light={isLight}
+      data-collapsed={collapsed}
     >
-      {/* Top Wordmark + Collapse Button */}
-      <div
-        className={`h-14 px-4 flex items-center justify-between border-b shrink-0 ${
-          isLight ? 'border-neutral-200/80' : 'border-slate-800/80'
-        }`}
-      >
-        {!collapsed ? (
-          <a
-            href="/"
-            aria-label="ZKMAP STUDIO Home"
-            onClick={(e) => {
-              e.preventDefault();
-              onSelectModule('dashboard');
-            }}
-            className={`flex items-center gap-2.5 text-sm font-extrabold tracking-tight whitespace-nowrap cursor-pointer ${
-              isLight ? 'text-neutral-950' : 'text-white'
-            }`}
-          >
-            <img
-              src="/images/zkmap-studio-logo.png"
-              alt="ZKMAP STUDIO"
-              className="h-7 w-auto rounded object-contain shrink-0"
-            />
-            <div className="flex flex-col leading-tight">
-              <span className="text-xs font-extrabold">ZKMAP STUDIO</span>
-            </div>
-          </a>
-        ) : (
-          <a
-            href="/"
-            aria-label="ZKMAP STUDIO Home"
-            title="ZKMAP STUDIO"
-            onClick={(e) => {
-              e.preventDefault();
-              onSelectModule('dashboard');
-            }}
-            className="flex items-center justify-center mx-auto cursor-pointer"
-          >
-            <img
-              src="/images/zkmap-studio-logo.png"
-              alt="ZKMAP STUDIO"
-              className="h-6 w-8 rounded object-cover"
-            />
-          </a>
-        )}
+      <div className="studio-sidebar-heading">
+        {!collapsed && <span>Workspace</span>}
         {onToggleCollapse && (
           <button
             type="button"
             onClick={onToggleCollapse}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className={`p-1.5 rounded-lg transition-colors ${
-              collapsed ? 'mx-auto' : ''
-            } ${
-              isLight
-                ? 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-200/60'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
+            className="hidden lg:grid"
           >
-            <PanelLeft className="w-4 h-4" />
+            <PanelLeft size={17} />
           </button>
         )}
+        <button type="button" onClick={onCloseMobile} className="lg:hidden" aria-label="Close studio menu" data-close-studio-menu>
+          <X size={20} />
+        </button>
       </div>
 
       {/* Scrollable Navigation */}
-      <nav className="flex-1 overflow-y-auto px-2.5 py-3 space-y-5">
+      <nav aria-label="Studio modules" className="flex-1 overflow-y-auto px-2.5 py-3 space-y-5">
         {/* Core Workspace Section */}
         <div className="space-y-0.5">
           {PRIMARY_ITEMS.map((item) => {
@@ -243,10 +200,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 key={item.id}
                 onClick={() => onSelectModule(item.id)}
                 role="button"
+                aria-current={isActive ? "page" : undefined}
                 tabIndex={0}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') onSelectModule(item.id);
+                  if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    onSelectModule(item.id);
+                  }
                 }}
+                aria-label={collapsed ? item.label : undefined}
                 title={collapsed ? item.label : undefined}
                 className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-[13px] cursor-pointer transition-colors ${
                   isActive
@@ -303,6 +265,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   setCreditsMenuOpen((prev) => !prev);
                 }
               }}
+              aria-label="Credits & Plans"
+              aria-expanded={collapsed ? undefined : creditsMenuOpen}
               title={collapsed ? 'Credits & Plans' : undefined}
               className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-[13px] transition-colors ${
                 activeModule === 'credit_wallet'
@@ -416,6 +380,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={() => onSelectModule('settings')}
+            aria-label="Settings"
+            aria-current={activeModule === 'settings' ? 'page' : undefined}
             title={collapsed ? 'Settings' : undefined}
             className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-[13px] transition-colors ${
               activeModule === 'settings'
@@ -462,10 +428,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 key={tool.id}
                 onClick={() => onSelectModule(tool.id)}
                 role="button"
+                aria-current={isActive ? "page" : undefined}
                 tabIndex={0}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') onSelectModule(tool.id);
+                  if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    onSelectModule(tool.id);
+                  }
                 }}
+                aria-label={collapsed ? tool.label : undefined}
                 title={collapsed ? tool.label : undefined}
                 className={`group w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-[13px] cursor-pointer transition-colors ${
                   isActive
@@ -513,6 +484,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={() => setMoreOpen((v) => !v)}
+            aria-expanded={moreOpen}
+            aria-label="More studio tools"
             className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-[13px] font-medium transition-colors ${
               moreOpen
                 ? isLight
@@ -535,7 +508,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Floating More Tools Popover (Screenshot 3 style) */}
       {moreOpen && (
         <div
-          className={`absolute bottom-20 left-3 z-50 w-60 rounded-2xl border shadow-2xl p-2 space-y-0.5 max-h-80 overflow-y-auto ${
+          className={`absolute bottom-4 left-3 z-50 w-56 rounded-2xl border shadow-2xl p-2 space-y-0.5 max-h-80 overflow-y-auto ${
             isLight
               ? 'bg-white border-neutral-200 text-neutral-900'
               : 'bg-slate-900 border-slate-700 text-slate-100'
@@ -551,7 +524,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               Close
             </button>
           </div>
-          {(moreTools.length > 0 ? moreTools : ALL_STUDIO_TOOLS).map((tool) => {
+          {(moreTools.length > 0 ? moreTools : additionalTools).map((tool) => {
             const Icon = tool.icon;
             const isPinned = pinnedIds.includes(tool.id);
             return (
@@ -564,7 +537,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
+                  if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
                     onSelectModule(tool.id);
                     setMoreOpen(false);
                   }
@@ -593,41 +567,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      {/* Bottom Workspace Switcher Card (ElevenCreative style) */}
-      <div
-        className={`p-3 border-t shrink-0 ${
-          isLight ? 'border-neutral-200 bg-white' : 'border-slate-800 bg-slate-950/90'
-        }`}
-      >
-        {collapsed ? (
-          <button
-            type="button"
-            onClick={() => onSelectModule('settings')}
-            title="Studio Settings"
-            className="w-full flex justify-center py-1"
-          >
-            <span className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 via-orange-400 to-rose-400 block" />
-          </button>
-        ) : (
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <span className="w-6 h-6 rounded-lg bg-gradient-to-tr from-amber-500 via-orange-400 to-rose-400 shrink-0" />
-              <span className="text-xs font-semibold truncate">Studio Creative</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => onSelectModule('films')}
-              className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                isLight
-                  ? 'bg-white border-neutral-200 hover:bg-neutral-100 text-neutral-900'
-                  : 'bg-slate-900 border-slate-700 hover:bg-slate-800 text-slate-100'
-              }`}
-            >
-              Switch
-            </button>
-          </div>
-        )}
-      </div>
     </aside>
   );
 };

@@ -1,863 +1,312 @@
 import React, { useState } from 'react';
 import {
-  Plus,
-  Mic,
-  ArrowUp,
-  ArrowRight,
-  Trash2,
-  Film,
-  BookOpen,
-  Mic2,
-  Music,
-  SlidersHorizontal,
-  Download,
-  Sparkles,
-  Image as ImageIcon,
-  Globe,
-  FileText,
-  Zap,
-  Play,
-  Activity,
+  Activity, BookOpen, Clapperboard, Download, FileText, Film, FolderOpen, Globe,
+  Image as ImageIcon, Mic, Mic2, Music, Play, Plus, SlidersHorizontal, Sparkles,
+  Trash2, Wand2, Zap,
 } from 'lucide-react';
 import { FilmProject, StudioModule, StudioTheme } from '../../types';
-import { soundFx } from '../../utils/audioSynth';
 import { useStudioAi } from '../../context/StudioAiContext';
 import { useAuth } from '../../context/AuthContext';
-import { BRAND_CONFIG } from '../../config/brand';
+import heroImage from '../../assets/images/studio-hero.webp';
+import cartoonImage from '../../assets/images/studio-cartoon.webp';
+import manhwaImage from '../../assets/images/studio-manhwa.webp';
+import voiceImage from '../../assets/images/studio-voice.webp';
+import editorImage from '../../assets/images/studio-editor.webp';
+import filmImage from '../../assets/images/studio-film.webp';
+import './studio-dashboard.css';
 
 interface StudioDashboardProps {
-  activeFilm: FilmProject;
+  activeFilm: FilmProject | null;
   allFilms: FilmProject[];
   onSelectFilm: (film: FilmProject) => void;
-  onDeleteFilm?: (filmId: string) => void;
-  onCreateNewFilm?: () => void;
+  onDeleteFilm: (filmId: string) => void;
+  onCreateNewFilm: () => void;
+  onRestoreSampleFilms: () => void;
   onNavigate: (module: StudioModule) => void;
+  onOpenQueue: () => void;
   theme: StudioTheme;
 }
 
-type FlowFilterTab = 'all' | 'templates' | 'apps' | 'projects';
-type ComposerTarget = 'cartoon_creator' | 'ai_wizard' | 'manhwa_studio' | 'ai_voice' | 'ai_video';
+const templates = [
+  { module: 'cartoon_creator', title: 'AI Cartoon Creator', description: 'Build scenes, edit the timeline, and review your cartoon before export.', image: cartoonImage },
+  { module: 'manhwa_studio', title: 'Manhwa to Motion', description: 'Animate comic panels and add dialogue in five languages.', image: manhwaImage },
+  { module: 'ai_voice', title: 'Voice & Dubbing', description: 'Record or generate narration and character dialogue.', image: voiceImage },
+  { module: 'editor', title: 'Timeline Studio', description: 'Edit video, dialogue, music and titles across multiple tracks.', image: editorImage },
+  { module: 'ai_wizard', title: 'AI Film Maker', description: 'Turn a concept into a screenplay, storyboard and shots.', image: filmImage },
+] satisfies { module: StudioModule; title: string; description: string; image: string }[];
 
-const TEMPLATE_CARDS: Array<{
-  id: string;
-  title: string;
-  subtitle: string;
-  image: string;
-  target: StudioModule;
-  category: string;
-}> = [
-  {
-    id: 'tpl-cartoon',
-    title: 'Step-by-step AI Cartoon Film Creator',
-    subtitle: '17-step production tracker, 9-point AI quality fixer, timeline editing & MP4 approval gate',
-    image: '/src/assets/images/cartoon_adventure_thumb_1794924309261.jpg',
-    target: 'cartoon_creator',
-    category: 'Cartoon Creator',
-  },
-  {
-    id: 'tpl-manhwa',
-    title: 'Manhwa chapter to animated reel',
-    subtitle: 'Import panels, add Kannada/Hindi/Tamil/Telugu/English dialogue & export MP4',
-    image: '/src/assets/images/manhwa_panel_warrior_1794812531995.jpg',
-    target: 'manhwa_studio',
-    category: 'Manhwa Studio',
-  },
-  {
-    id: 'tpl-voice',
-    title: '5-language character dubbing booth',
-    subtitle: 'Generate expressive narration and dialogue stems with ElevenLabs & Studio voices',
-    image: '/src/assets/images/feature_voice_dubbing_1794901010817.jpg',
-    target: 'ai_voice',
-    category: 'Voice Studio',
-  },
-  {
-    id: 'tpl-film',
-    title: 'Prompt to complete short film',
-    subtitle: 'Turn one concept into screenplay scenes, storyboard frames, and video shots',
-    image: '/src/assets/images/cinema_sci_fi_scene_1794406566762.jpg',
-    target: 'ai_wizard',
-    category: 'AI Film Maker',
-  },
-  {
-    id: 'tpl-editor',
-    title: 'Multi-track timeline & 4K finishing',
-    subtitle: 'Assemble video, dialogue A1, music A2, subtitles, and export downloadable MP4',
-    image: '/src/assets/images/feature_film_timeline_1794901011133.jpg',
-    target: 'editor',
-    category: 'Timeline Editor',
-  },
-];
+const tools = [
+  { module: 'cartoon_creator', title: 'Cartoon & Anime', icon: Clapperboard },
+  { module: 'ai_video', title: 'AI Video', icon: Film },
+  { module: 'ai_image', title: 'AI Image', icon: ImageIcon },
+  { module: 'ai_voice', title: 'Text to Speech', icon: Mic2 },
+  { module: 'editor', title: 'Timeline Editor', icon: SlidersHorizontal },
+  { module: 'export', title: 'Export & Render', icon: Download },
+  { module: 'manhwa_studio', title: 'Manhwa Studio', icon: BookOpen },
+  { module: 'ai_wizard', title: 'AI Film Maker', icon: Sparkles },
+  { module: 'audio', title: 'Music & Sound', icon: Music },
+  { module: 'vfx', title: 'VFX & Shaders', icon: Wand2 },
+  { module: 'media', title: 'Asset Library', icon: FolderOpen },
+  { module: 'script', title: 'Screenplay', icon: FileText },
+  { module: 'social_media', title: 'Social Studio', icon: Globe },
+] satisfies { module: StudioModule; title: string; icon: React.ElementType }[];
 
-const APP_CARDS: Array<{
-  id: StudioModule;
-  title: string;
-  description: string;
-  category: string;
-  icon: React.ElementType;
-}> = [
-  {
-    id: 'cartoon_creator',
-    title: 'AI Cartoon Film Creator',
-    description: '17-step workflow tracker, automatic mistake detection, editing & approval before MP4.',
-    category: 'Cartoon Workflow',
-    icon: Film,
-  },
-  {
-    id: 'ai_voice',
-    title: 'Text to Speech',
-    description: 'Synthesize expressive dialogue in Kannada, English, Hindi, Tamil & Telugu.',
-    category: 'Voice & Audio',
-    icon: Mic2,
-  },
-  {
-    id: 'manhwa_studio',
-    title: 'Manhwa to Video & Audio',
-    description: 'Chapter URL import, JPG/PNG/WebP upload, panel motion & MP4/MP3 export.',
-    category: 'Animation',
-    icon: BookOpen,
-  },
-  {
-    id: 'ai_wizard',
-    title: 'AI Film Maker',
-    description: 'Full screenplay, storyboard, audio score & multi-scene automated assembly.',
-    category: 'Filmmaking',
-    icon: Sparkles,
-  },
-  {
-    id: 'ai_video',
-    title: 'Image & Video Generator',
-    description: 'Text-to-video, image-to-video, camera dolly moves & cinema aspect ratios.',
-    category: 'Video Synthesis',
-    icon: Film,
-  },
-  {
-    id: 'audio',
-    title: 'Music & Sound Effects',
-    description: 'Compose score tracks, layered soundscapes, foley impacts & stem mixing.',
-    category: 'Music Studio',
-    icon: Music,
-  },
-  {
-    id: 'ai_image',
-    title: 'AI Image Studio',
-    description: 'Keyframes, character posters, storyplates & visual development renders.',
-    category: 'Visuals',
-    icon: ImageIcon,
-  },
-  {
-    id: 'editor',
-    title: 'Timeline Studio',
-    description: 'Frame-accurate multi-track editing for V1/V2 video, A1/A2 audio & titles.',
-    category: 'Post-Production',
-    icon: SlidersHorizontal,
-  },
-  {
-    id: 'export',
-    title: 'Export & Render',
-    description: 'Real-time canvas preview, MP4 download, and YouTube / Blogger publishing.',
-    category: 'Distribution',
-    icon: Download,
-  },
-  {
-    id: 'social_media',
-    title: 'Social Studio',
-    description: 'Reprocess & schedule reels across YouTube, Instagram Reels & Facebook.',
-    category: 'Distribution',
-    icon: Globe,
-  },
-  {
-    id: 'script',
-    title: 'Screenplay Writer',
-    description: 'Courier Prime industry script formatting with dialogue cue extraction.',
-    category: 'Writing',
-    icon: FileText,
-  },
-];
+const filters = [
+  { id: 'all', label: 'Overview' },
+  { id: 'templates', label: 'Workflows' },
+  { id: 'apps', label: 'Studio tools' },
+  { id: 'projects', label: 'My projects' },
+] as const;
 
-export const StudioDashboard: React.FC<StudioDashboardProps> = ({
-  activeFilm,
-  allFilms,
-  onSelectFilm,
-  onDeleteFilm,
-  onCreateNewFilm,
-  onNavigate,
-  theme,
-}) => {
-  const { wallet, history } = useStudioAi();
-  const { account, usageLogs, openAuthModal } = useAuth();
+type SpeechEvent = { results: ArrayLike<ArrayLike<{ transcript: string }>> };
+type BrowserRecognition = {
+  lang: string;
+  onresult: (event: SpeechEvent) => void;
+  onerror: () => void;
+  onend: () => void;
+  start: () => void;
+};
 
-  const [promptText, setPromptText] = useState('');
-  const [composerTarget, setComposerTarget] = useState<ComposerTarget>('ai_wizard');
-  const [activeTab, setActiveTab] = useState<FlowFilterTab>('all');
-  const [confirmDeleteFilmId, setConfirmDeleteFilmId] = useState<string | null>(null);
-  const [dictationNotice, setDictationNotice] = useState<string | null>(null);
+export function StudioDashboard({
+  activeFilm, allFilms, onSelectFilm, onDeleteFilm, onCreateNewFilm, onRestoreSampleFilms,
+  onNavigate, onOpenQueue, theme,
+}: StudioDashboardProps) {
+  const { wallet, history, queue } = useStudioAi();
+  const { account, usageLogs } = useAuth();
+  const [prompt, setPrompt] = useState('');
+  const [filter, setFilter] = useState<(typeof filters)[number]['id']>('all');
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [dictationNotice, setDictationNotice] = useState('');
+  const [dictationLanguage, setDictationLanguage] = useState('kn-IN');
+  const [listening, setListening] = useState(false);
+  const activeRenders = queue.filter(({ status }) => status === 'Queued' || status === 'Synthesizing').length;
+  const failedRenders = queue.filter(({ status }) => status === 'Failed').length;
+  const credits = account?.creditsRemaining.toLocaleString() ??
+    (wallet.plan === 'Unlimited' ? 'Unlimited' : wallet.balance.toLocaleString());
+  const progress = activeFilm?.scenesCount
+    ? Math.max(0, Math.min(100, Math.round((activeFilm.completedScenes / activeFilm.scenesCount) * 100)))
+    : 0;
+  const activity = usageLogs.length
+    ? usageLogs.slice(0, 6).map((entry) => ({
+        id: entry.id, tool: entry.tool, detail: entry.summary, value: `−${entry.creditsUsed} cr`,
+      }))
+    : history.slice(0, 6).map((entry) => ({
+        id: entry.id, tool: entry.tool, detail: `${entry.type} · ${entry.timestamp}`,
+        value: `${entry.amount.toLocaleString()} cr`,
+      }));
 
-  const isLight = theme === 'elevenlabs';
-
-  const handleLaunchFlow = () => {
-    soundFx.playCinematicImpact();
-    if (promptText.trim()) {
-      try {
-        localStorage.setItem('fvs_active_flow_prompt', promptText.trim());
-      } catch {
-        // ignore storage limits
-      }
+  function startFilmFlow(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!activeFilm) onCreateNewFilm();
+    try {
+      if (prompt.trim()) localStorage.setItem('fvs_active_flow_prompt', prompt.trim());
+      else localStorage.removeItem('fvs_active_flow_prompt');
+    } catch {
+      // The film workspace can open when storage is unavailable.
     }
-    onNavigate(composerTarget);
-  };
+    onNavigate('ai_wizard');
+  }
 
-  const handleQuickVoicePrompt = () => {
-    soundFx.playScannerBeep();
-    const SpeechRec =
-      (window as unknown as { SpeechRecognition?: any; webkitSpeechRecognition?: any })
-        .SpeechRecognition ||
-      (window as unknown as { webkitSpeechRecognition?: any }).webkitSpeechRecognition;
-
-    if (!SpeechRec) {
-      onNavigate('ai_voice');
+  function startDictation() {
+    const browser = window as Window & {
+      SpeechRecognition?: new () => BrowserRecognition;
+      webkitSpeechRecognition?: new () => BrowserRecognition;
+    };
+    const Recognition = browser.SpeechRecognition || browser.webkitSpeechRecognition;
+    if (!Recognition) {
+      setDictationNotice('Voice input is unavailable in this browser. Type your idea to continue.');
       return;
     }
-
     try {
-      const rec = new SpeechRec();
-      rec.lang = 'en-US';
-      rec.interimResults = false;
-      setDictationNotice('Listening for your voice prompt...');
-      rec.onresult = (event: any) => {
-        const transcript = event?.results?.[0]?.[0]?.transcript || '';
-        if (transcript) {
-          setPromptText((prev) => (prev ? `${prev} ${transcript}` : transcript));
-        }
-        setDictationNotice(null);
+      const recognition = new Recognition();
+      recognition.lang = dictationLanguage;
+      recognition.onresult = ({ results }) => {
+        const transcript = results[0]?.[0]?.transcript;
+        if (transcript) setPrompt((value) => [value, transcript].filter(Boolean).join(' '));
       };
-      rec.onerror = () => setDictationNotice(null);
-      rec.onend = () => setDictationNotice(null);
-      rec.start();
+      recognition.onerror = () => {
+        setListening(false);
+        setDictationNotice('Voice input could not start. Check your microphone access or type your idea.');
+      };
+      recognition.onend = () => setListening(false);
+      recognition.start();
+      setDictationNotice('');
+      setListening(true);
     } catch {
-      setDictationNotice(null);
-      onNavigate('ai_voice');
+      setDictationNotice('Voice input could not start. Type your idea to continue.');
     }
-  };
+  }
 
-  const creditsDisplay = account
-    ? account.creditsRemaining.toLocaleString()
-    : wallet.plan === 'Unlimited'
-    ? 'Unlimited'
-    : wallet.balance.toLocaleString();
+  function openTimeline(film: FilmProject) {
+    onSelectFilm(film);
+    onNavigate('editor');
+  }
 
   return (
-    <div
-      className={`flex-1 overflow-y-auto px-6 py-10 md:px-10 ${
-        isLight ? 'bg-white text-neutral-950' : 'bg-[#090b11] text-slate-100'
-      }`}
-    >
-      <div className="max-w-5xl mx-auto space-y-12">
-        {/* Top Flows Hero Composer with ZKMAP STUDIO Brand Showcase */}
-        <section className="max-w-2xl mx-auto text-center space-y-6 pt-2">
-          <div className="flex flex-col items-center gap-3">
-            <a
-              href="/"
-              aria-label="ZKMAP STUDIO Home"
-              onClick={(e) => {
-                e.preventDefault();
-                soundFx.playScannerBeep();
-                onNavigate('dashboard');
-              }}
-              className="inline-block rounded-2xl overflow-hidden border border-neutral-200/80 shadow-lg hover:scale-[1.01] transition-transform cursor-pointer"
-            >
-              <img
-                src={BRAND_CONFIG.logoPath}
-                alt={BRAND_CONFIG.name}
-                className="h-24 sm:h-28 w-auto object-contain bg-[#060b19]"
+    <div className="studio-home" data-light={theme === 'elevenlabs'}>
+      <div className="studio-home-content">
+        <div className="studio-home-top">
+          <h1>Production workspace</h1>
+          <button type="button" className="studio-secondary" onClick={() => {
+            onCreateNewFilm();
+            onNavigate('films');
+          }}>
+            <Plus size={17} /> New project
+          </button>
+        </div>
+
+        <section className="studio-hero" aria-labelledby="studio-hero-heading">
+          <img className="studio-hero-image" src={heroImage} alt="" fetchPriority="high" />
+          <div className="studio-hero-copy">
+            <div className="studio-hero-label"><Clapperboard size={16} /> AI FILM MAKER</div>
+            <h2 id="studio-hero-heading">Create your next film</h2>
+            <p>Start with an idea in Kannada or English. Build the screenplay, storyboard and shots in the Film Maker.</p>
+            <form className="studio-composer" onSubmit={startFilmFlow}>
+              <textarea
+                aria-label="Film idea"
+                placeholder="A young astronomer discovers a hidden clock beneath an ancient observatory…"
+                value={prompt}
+                rows={2}
+                onChange={(event) => setPrompt(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
               />
-            </a>
-
-
-          </div>
-
-          <div className="space-y-2.5">
-            <div
-              className={`text-xs font-medium tracking-wide ${
-                isLight ? 'text-neutral-500' : 'text-slate-400'
-              }`}
-            >
-              {BRAND_CONFIG.name}
-            </div>
-            <h1
-              className={`text-3xl sm:text-4xl font-semibold tracking-tight leading-[1.15] [text-wrap:balance] ${
-                isLight ? 'text-neutral-950' : 'text-white'
-              }`}
-            >
-              Create your best content from start to finish on an AI canvas
-            </h1>
-          </div>
-
-          {/* Prompt Composer Card */}
-          <div
-            className={`text-left rounded-2xl border p-4 space-y-3 transition-shadow ${
-              isLight
-                ? 'bg-white border-neutral-200 shadow-[0_6px_28px_rgba(0,0,0,0.05)] focus-within:border-neutral-400'
-                : 'bg-[#0d111c] border-slate-700 shadow-2xl focus-within:border-slate-500'
-            }`}
-          >
-            <textarea
-              rows={2}
-              value={promptText}
-              onChange={(e) => setPromptText(e.target.value)}
-              onKeyDown={(e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                  e.preventDefault();
-                  handleLaunchFlow();
-                }
-              }}
-              placeholder="Translate my ad or manhwa into five languages, or direct a short film..."
-              className={`w-full bg-transparent text-sm sm:text-base outline-none resize-none leading-relaxed ${
-                isLight
-                  ? 'text-neutral-950 placeholder:text-neutral-400'
-                  : 'text-white placeholder:text-slate-500'
-              }`}
-            />
-
-            {dictationNotice && (
-              <div className="text-xs font-medium text-blue-600">{dictationNotice}</div>
-            )}
-
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => onNavigate('manhwa_studio')}
-                  title="Upload images or Manhwa chapter"
-                  aria-label="Import media or images"
-                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
-                    isLight
-                      ? 'hover:bg-neutral-100 text-neutral-600'
-                      : 'hover:bg-slate-800 text-slate-300'
-                  }`}
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-
-                {(
-                  [
-                    { id: 'cartoon_creator', label: 'Cartoon Film' },
-                    { id: 'ai_wizard', label: 'AI Film' },
-                    { id: 'manhwa_studio', label: 'Manhwa' },
-                    { id: 'ai_voice', label: 'Voice' },
-                    { id: 'ai_video', label: 'Video' },
-                  ] as const
-                ).map((mode) => (
-                  <button
-                    key={mode.id}
-                    type="button"
-                    onClick={() => setComposerTarget(mode.id)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                      composerTarget === mode.id
-                        ? isLight
-                          ? 'bg-neutral-900 text-white'
-                          : 'bg-white text-black'
-                        : isLight
-                        ? 'text-neutral-600 hover:bg-neutral-100'
-                        : 'text-slate-400 hover:bg-slate-800'
-                    }`}
-                  >
-                    {mode.label}
+              <div className="studio-composer-actions">
+                <div className="studio-dictation">
+                  <button type="button" className="studio-mic" onClick={startDictation} disabled={listening} aria-label="Dictate film idea" title="Dictate film idea">
+                    <Mic size={17} />
                   </button>
-                ))}
+                  <select aria-label="Dictation language" value={dictationLanguage} onChange={(event) => setDictationLanguage(event.target.value)}>
+                    <option value="kn-IN">ಕನ್ನಡ</option>
+                    <option value="en-IN">English</option>
+                  </select>
+                </div>
+                <button type="submit" className="studio-primary"><Sparkles size={16} /> Open Film Maker</button>
               </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleQuickVoicePrompt}
-                  title="Dictate flow prompt"
-                  aria-label="Dictate flow prompt"
-                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
-                    isLight
-                      ? 'hover:bg-neutral-100 text-neutral-600'
-                      : 'hover:bg-slate-800 text-slate-300'
-                  }`}
-                >
-                  <Mic className="w-4 h-4" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleLaunchFlow}
-                  aria-label="Launch selected workflow"
-                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
-                    promptText.trim()
-                      ? isLight
-                        ? 'bg-neutral-950 text-white hover:bg-black'
-                        : 'bg-white text-black hover:bg-slate-200'
-                      : isLight
-                      ? 'bg-neutral-300 text-white hover:bg-neutral-900'
-                      : 'bg-slate-700 text-slate-200 hover:bg-white hover:text-black'
-                  }`}
-                >
-                  <ArrowUp className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="text-xs">
-            <span className={isLight ? 'text-neutral-500' : 'text-slate-400'}>or </span>
-            <button
-              type="button"
-              onClick={() => {
-                if (onCreateNewFilm) {
-                  onCreateNewFilm();
-                } else {
-                  onNavigate('films');
-                }
-              }}
-              className={`font-medium hover:underline ${
-                isLight ? 'text-neutral-900' : 'text-white'
-              }`}
-            >
-              start with a blank project
-            </button>
+              {(listening || dictationNotice) && <p className="studio-dictation-status" role="status">{listening ? 'Listening…' : dictationNotice}</p>}
+            </form>
           </div>
         </section>
 
-        {/* Filter Bar + New Flow CTA Row */}
-        <section className="space-y-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-1.5">
-              {(
-                [
-                  { id: 'all', label: 'All flows' },
-                  { id: 'templates', label: 'Templates' },
-                  { id: 'apps', label: 'Apps' },
-                  { id: 'projects', label: 'My projects' },
-                ] as const
-              ).map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                    activeTab === tab.id
-                      ? isLight
-                        ? 'bg-neutral-100 text-neutral-950 font-semibold'
-                        : 'bg-slate-800 text-white font-semibold'
-                      : isLight
-                      ? 'text-neutral-600 hover:bg-neutral-100/70 hover:text-neutral-950'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {tab.label}
+        <section className="studio-overview" aria-label="Production status">
+          <button type="button" className="studio-stat" onClick={() => setFilter('projects')}>
+            <span className="studio-stat-icon"><Clapperboard size={19} /></span>
+            <span className="studio-stat-body">
+              <span>Active project</span>
+              <strong title={activeFilm?.title}>{activeFilm?.title || 'No active project'}</strong>
+              {activeFilm && <span className="studio-stat-progress">
+                <progress aria-label="Scene completion" value={progress} max={100} />
+                <span>{activeFilm.completedScenes}/{activeFilm.scenesCount} scenes</span>
+              </span>}
+            </span>
+          </button>
+          <button type="button" className="studio-stat" onClick={onOpenQueue}>
+            <span className="studio-stat-icon"><Activity size={19} /></span>
+            <span className="studio-stat-body">
+              <span>Render queue</span>
+              <strong>{activeRenders ? `${activeRenders} in progress` : 'No active renders'}</strong>
+              <span>{failedRenders ? `${failedRenders} need attention` : 'View render activity'}</span>
+            </span>
+          </button>
+          <button type="button" className="studio-stat" onClick={() => onNavigate('credit_wallet')}>
+            <span className="studio-stat-icon"><Zap size={19} /></span>
+            <span className="studio-stat-body">
+              <span>Credits &amp; plans</span>
+              <strong>{credits} credits</strong>
+              <span>{account?.plan ?? wallet.plan} plan</span>
+            </span>
+          </button>
+        </section>
+
+        <nav aria-label="Dashboard sections" className="studio-filters">
+          {filters.map(({ id, label }) => (
+            <button key={id} type="button" aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>
+          ))}
+        </nav>
+
+        {(filter === 'all' || filter === 'templates') && (
+          <section className="studio-section">
+            <div className="studio-section-title">
+              <h2>Featured workflows</h2>
+              {filter === 'all' && <button type="button" onClick={() => setFilter('templates')}>View all workflows</button>}
+            </div>
+            <div className="studio-workflows">
+              {(filter === 'all' ? templates.slice(0, 4) : templates).map(({ module, title, description, image }) => (
+                <button key={module} type="button" className="studio-workflow" onClick={() => onNavigate(module)}>
+                  <div className="studio-workflow-image"><img src={image} alt="" loading="lazy" width={640} height={360} /></div>
+                  <div className="studio-workflow-copy"><h3>{title}</h3><p>{description}</p></div>
                 </button>
               ))}
             </div>
+          </section>
+        )}
 
-            <div className="flex items-center gap-2.5">
-              <button
-                type="button"
-                onClick={() => onNavigate('credit_wallet')}
-                className={`px-3 py-2 rounded-xl border text-xs font-mono-cinema flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
-                  isLight
-                    ? 'bg-white border-neutral-200 text-neutral-700 hover:border-neutral-400'
-                    : 'bg-slate-900 border-slate-700 text-slate-200 hover:border-slate-500'
-                }`}
-              >
-                <Zap className="w-3.5 h-3.5 text-amber-500" />
-                <span>{creditsDisplay} credits</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onNavigate('ai_wizard')}
-                className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
-                  isLight
-                    ? 'bg-neutral-950 hover:bg-black text-white'
-                    : 'bg-white hover:bg-slate-200 text-black'
-                }`}
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>New flow</span>
-              </button>
+        {(filter === 'all' || filter === 'apps') && (
+          <section className="studio-section">
+            <div className="studio-section-title">
+              <h2>Studio tools</h2>
+              {filter === 'all' && <button type="button" onClick={() => setFilter('apps')}>View all tools</button>}
             </div>
+            <div className="studio-tools">
+              {(filter === 'all' ? tools.slice(0, 6) : tools).map(({ module, title, icon: Icon }) => (
+                <button key={module} type="button" onClick={() => onNavigate(module)}><Icon size={19} /> {title}</button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {(filter === 'all' || filter === 'projects') && (
+          <div className="studio-projects">
+            <section className="studio-panel" aria-labelledby="studio-project-heading">
+              <div className="studio-section-title">
+                <h2 id="studio-project-heading">My projects <small>{allFilms.length}</small></h2>
+                {filter === 'all' && <button type="button" onClick={() => setFilter('projects')}>View all projects</button>}
+              </div>
+              {allFilms.length === 0 ? (
+                <div className="studio-empty">
+                  <p>No film projects yet.</p>
+                  <button type="button" onClick={onRestoreSampleFilms}>Restore starter films</button>
+                </div>
+              ) : (
+                (filter === 'all' ? allFilms.slice(0, 3) : allFilms).map((film) => (
+                  <div className="studio-project-row" key={film.id}>
+                    <button type="button" className="studio-project-select" onClick={() => onSelectFilm(film)} aria-pressed={film.id === activeFilm?.id}>
+                      <img src={film.coverImage} alt="" loading="lazy" />
+                      <span><strong>{film.title}</strong><small>{film.status} · {film.resolution}</small></span>
+                    </button>
+                    <div className="studio-project-actions">
+                      {deleteId === film.id ? (
+                        <>
+                          <button type="button" className="studio-delete" onClick={() => { onDeleteFilm(film.id); setDeleteId(null); }}>Delete</button>
+                          <button type="button" onClick={() => setDeleteId(null)}>Cancel</button>
+                        </>
+                      ) : (
+                        <>
+                          <button type="button" onClick={() => openTimeline(film)} aria-label={`Edit ${film.title} in Timeline`} title="Open in Timeline"><Play size={16} /></button>
+                          <button type="button" onClick={() => setDeleteId(film.id)} aria-label={`Delete ${film.title}`} title="Delete project"><Trash2 size={16} /></button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </section>
+            <section className="studio-panel" aria-labelledby="studio-activity-heading">
+              <div className="studio-section-title"><h2 id="studio-activity-heading">Recent credit activity</h2></div>
+              {activity.length === 0 && <p className="studio-empty">No credit activity yet.</p>}
+              {activity.map(({ id, tool, detail, value }) => (
+                <div key={id} className="studio-activity-row">
+                  <div><strong>{tool}</strong><small>{detail}</small></div><span>{value}</span>
+                </div>
+              ))}
+            </section>
           </div>
-
-          {/* Templates Section (shown in All flows & Templates tab) */}
-          {(activeTab === 'all' || activeTab === 'templates') && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h2
-                  className={`text-sm font-semibold ${
-                    isLight ? 'text-neutral-950' : 'text-white'
-                  }`}
-                >
-                  Start from a template
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('apps')}
-                  className={`text-xs font-medium hover:underline ${
-                    isLight ? 'text-neutral-500 hover:text-neutral-900' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  View all
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {TEMPLATE_CARDS.map((tpl) => (
-                  <button
-                    key={tpl.id}
-                    type="button"
-                    onClick={() => {
-                      soundFx.playScannerBeep();
-                      onNavigate(tpl.target);
-                    }}
-                    className={`group text-left rounded-2xl border overflow-hidden transition-all flex flex-col ${
-                      isLight
-                        ? 'bg-[#FAFAFB] border-neutral-200 hover:border-neutral-400'
-                        : 'bg-[#0d111c] border-slate-800 hover:border-slate-600'
-                    }`}
-                  >
-                    <div className="aspect-[16/10] w-full overflow-hidden bg-neutral-100 dark:bg-slate-900">
-                      <img
-                        src={tpl.image}
-                        alt={tpl.title}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
-                      />
-                    </div>
-                    <div className="p-4 space-y-1.5 flex-1">
-                      <div
-                        className={`text-[11px] font-medium ${
-                          isLight ? 'text-neutral-500' : 'text-slate-400'
-                        }`}
-                      >
-                        {tpl.category}
-                      </div>
-                      <h3
-                        className={`text-sm font-semibold leading-snug ${
-                          isLight ? 'text-neutral-950' : 'text-white'
-                        }`}
-                      >
-                        {tpl.title}
-                      </h3>
-                      <p
-                        className={`text-xs leading-relaxed line-clamp-2 ${
-                          isLight ? 'text-neutral-500' : 'text-slate-400'
-                        }`}
-                      >
-                        {tpl.subtitle}
-                      </p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Apps & Creative Tools Directory (Screenshot 2 style) */}
-          {(activeTab === 'all' || activeTab === 'apps') && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h2
-                  className={`text-sm font-semibold ${
-                    isLight ? 'text-neutral-950' : 'text-white'
-                  }`}
-                >
-                  Studio Apps & Creative Tools
-                </h2>
-                <span
-                  className={`text-xs ${isLight ? 'text-neutral-500' : 'text-slate-400'}`}
-                >
-                  Connected to active project: {activeFilm.title}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                {APP_CARDS.map((app) => {
-                  const Icon = app.icon;
-                  return (
-                    <button
-                      key={app.id}
-                      type="button"
-                      onClick={() => {
-                        soundFx.playScannerBeep();
-                        onNavigate(app.id);
-                      }}
-                      className={`text-left p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 group ${
-                        isLight
-                          ? 'bg-white border-neutral-200 hover:border-neutral-400 hover:bg-neutral-50/70'
-                          : 'bg-[#0d111c] border-slate-800 hover:border-slate-600'
-                      }`}
-                    >
-                      <div className="space-y-2.5">
-                        <div className="flex items-center justify-between">
-                          <span
-                            className={`w-8 h-8 rounded-xl border flex items-center justify-center ${
-                              isLight
-                                ? 'bg-neutral-50 border-neutral-200 text-neutral-900'
-                                : 'bg-slate-900 border-slate-700 text-white'
-                            }`}
-                          >
-                            <Icon className="w-4 h-4" />
-                          </span>
-                          <ArrowRight
-                            className={`w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity ${
-                              isLight ? 'text-neutral-600' : 'text-slate-300'
-                            }`}
-                          />
-                        </div>
-                        <div
-                          className={`text-xs font-semibold ${
-                            isLight ? 'text-neutral-950' : 'text-white'
-                          }`}
-                        >
-                          {app.title}
-                        </div>
-                        <p
-                          className={`text-[11px] leading-relaxed line-clamp-2 ${
-                            isLight ? 'text-neutral-500' : 'text-slate-400'
-                          }`}
-                        >
-                          {app.description}
-                        </p>
-                      </div>
-                      <div
-                        className={`text-[11px] font-medium ${
-                          isLight ? 'text-neutral-400' : 'text-slate-500'
-                        }`}
-                      >
-                        {app.category}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Active Film Slate & Recent Activity (Always reachable + dedicated in My projects) */}
-          {(activeTab === 'all' || activeTab === 'projects') && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-2">
-              <div
-                className={`lg:col-span-7 rounded-2xl border p-5 space-y-4 ${
-                  isLight ? 'bg-white border-neutral-200' : 'bg-[#0d111c] border-slate-800'
-                }`}
-              >
-                <div className="flex items-center justify-between border-b pb-3 border-neutral-100 dark:border-slate-800">
-                  <div>
-                    <h3
-                      className={`text-sm font-semibold ${
-                        isLight ? 'text-neutral-950' : 'text-white'
-                      }`}
-                    >
-                      Film Projects ({allFilms.length})
-                    </h3>
-                    <p className={`text-xs ${isLight ? 'text-neutral-500' : 'text-slate-400'}`}>
-                      Open any production in Timeline Editor or delete unused entries
-                    </p>
-                  </div>
-                  {onCreateNewFilm && (
-                    <button
-                      type="button"
-                      onClick={onCreateNewFilm}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                        isLight
-                          ? 'bg-neutral-50 hover:bg-neutral-100 border-neutral-200 text-neutral-900'
-                          : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-white'
-                      }`}
-                    >
-                      + New Film
-                    </button>
-                  )}
-                </div>
-
-                {allFilms.length === 0 ? (
-                  <div className="p-6 text-center text-xs text-neutral-500 border border-dashed rounded-xl border-neutral-200">
-                    No film projects open. Click + New Film to start a new production.
-                  </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    {allFilms.map((film) => {
-                      const isCurrent = film.id === activeFilm.id;
-                      const isConfirming = confirmDeleteFilmId === film.id;
-                      return (
-                        <div
-                          key={film.id}
-                          className={`p-3 rounded-xl border flex flex-wrap items-center justify-between gap-3 transition-colors ${
-                            isCurrent
-                              ? isLight
-                                ? 'bg-neutral-50 border-neutral-900/40'
-                                : 'bg-slate-900 border-slate-600'
-                              : isLight
-                              ? 'bg-white border-neutral-200'
-                              : 'bg-slate-950 border-slate-800'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0 flex-1">
-                            <img
-                              src={film.coverImage}
-                              alt={film.title}
-                              referrerPolicy="no-referrer"
-                              className="w-11 h-11 rounded-lg object-cover border border-neutral-200 dark:border-slate-700 shrink-0"
-                            />
-                            <div className="min-w-0">
-                              <div
-                                className={`text-xs font-semibold truncate ${
-                                  isLight ? 'text-neutral-950' : 'text-white'
-                                }`}
-                              >
-                                {film.title}
-                              </div>
-                              <div className="text-[11px] font-mono-cinema text-neutral-500 truncate">
-                                {film.genre} · {film.scenesCount} scenes · {film.resolution}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => onSelectFilm(film)}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                                isCurrent
-                                  ? isLight
-                                    ? 'bg-neutral-950 text-white'
-                                    : 'bg-white text-black'
-                                  : isLight
-                                  ? 'bg-neutral-100 hover:bg-neutral-200 text-neutral-900'
-                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
-                              }`}
-                            >
-                              {isCurrent ? 'Active' : 'Open'}
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onSelectFilm(film);
-                                onNavigate('editor');
-                              }}
-                              title="Open in Timeline Editor"
-                              className={`p-1.5 rounded-lg border transition-colors ${
-                                isLight
-                                  ? 'border-neutral-200 hover:bg-neutral-100 text-neutral-700'
-                                  : 'border-slate-700 hover:bg-slate-800 text-slate-200'
-                              }`}
-                            >
-                              <Play className="w-3.5 h-3.5" />
-                            </button>
-
-                            {onDeleteFilm &&
-                              (isConfirming ? (
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      onDeleteFilm(film.id);
-                                      setConfirmDeleteFilmId(null);
-                                    }}
-                                    className="px-2 py-1.5 bg-red-600 hover:bg-red-700 text-white text-[11px] font-semibold rounded-lg"
-                                  >
-                                    Delete
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfirmDeleteFilmId(null)}
-                                    className={`px-2 py-1.5 text-[11px] rounded-lg ${
-                                      isLight ? 'bg-neutral-100 text-neutral-700' : 'bg-slate-800 text-slate-300'
-                                    }`}
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmDeleteFilmId(film.id)}
-                                  title={`Delete ${film.title}`}
-                                  aria-label={`Delete ${film.title}`}
-                                  className={`p-1.5 rounded-lg border transition-colors ${
-                                    isLight
-                                      ? 'border-neutral-200 text-neutral-500 hover:text-red-600 hover:border-red-200 hover:bg-red-50'
-                                      : 'border-slate-700 text-slate-400 hover:text-red-400 hover:bg-red-950/40'
-                                  }`}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Recent Credits & Studio Activity */}
-              <div
-                className={`lg:col-span-5 rounded-2xl border p-5 space-y-4 ${
-                  isLight ? 'bg-white border-neutral-200' : 'bg-[#0d111c] border-slate-800'
-                }`}
-              >
-                <div className="flex items-center justify-between border-b pb-3 border-neutral-100 dark:border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <Activity className="w-4 h-4 text-neutral-500" />
-                    <h3
-                      className={`text-sm font-semibold ${
-                        isLight ? 'text-neutral-950' : 'text-white'
-                      }`}
-                    >
-                      Recent Credits & Activity
-                    </h3>
-                  </div>
-                  <span className="text-xs font-mono-cinema text-neutral-500">
-                    {account ? account.plan : wallet.plan}
-                  </span>
-                </div>
-
-                <div className="space-y-2 max-h-72 overflow-y-auto">
-                  {(usageLogs.length > 0
-                    ? usageLogs.slice(0, 6).map((l) => ({
-                        id: l.id,
-                        title: l.tool,
-                        detail: l.summary,
-                        meta: `-${l.creditsUsed} cr · ${l.provider}`,
-                      }))
-                    : history.slice(0, 6).map((h) => ({
-                        id: h.id,
-                        title: h.tool,
-                        detail: h.type,
-                        meta: `${h.amount.toLocaleString()} cr · ${h.timestamp}`,
-                      }))
-                  ).map((entry) => (
-                    <div
-                      key={entry.id}
-                      className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-3 ${
-                        isLight ? 'bg-[#FAFAFB] border-neutral-200' : 'bg-slate-950 border-slate-800'
-                      }`}
-                    >
-                      <div className="min-w-0">
-                        <div
-                          className={`font-semibold truncate ${
-                            isLight ? 'text-neutral-950' : 'text-white'
-                          }`}
-                        >
-                          {entry.title}
-                        </div>
-                        <div className="text-[11px] text-neutral-500 truncate">{entry.detail}</div>
-                      </div>
-                      <span className="text-[11px] font-mono-cinema text-neutral-600 dark:text-slate-300 shrink-0">
-                        {entry.meta}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </section>
+        )}
       </div>
     </div>
   );
-};
+}
