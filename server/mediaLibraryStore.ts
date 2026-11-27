@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
+import { decodeLibraryUpload } from './libraryUploadFormat.ts';
 
 export interface LibraryCatalogCategory {
   id: string;
@@ -13,7 +15,7 @@ export interface LibraryUploadedAsset {
   name: string;
   category: string;
   subcategory: string;
-  source: 'upload' | 'ai_generated';
+  source: 'upload' | 'ai_generated' | 'rendered';
   format: string;
   mimeType: string;
   sizeBytes: number;
@@ -106,7 +108,9 @@ function readDb(): LibraryUploadedAsset[] {
 
 function writeDb(items: LibraryUploadedAsset[]) {
   ensureStorage();
-  fs.writeFileSync(DB_PATH, JSON.stringify(items, null, 2), 'utf8');
+  const tempPath = DB_PATH + '.tmp';
+  fs.writeFileSync(tempPath, JSON.stringify(items, null, 2), 'utf8');
+  fs.renameSync(tempPath, DB_PATH);
 }
 
 function formatBytes(bytes: number): string {
@@ -136,20 +140,6 @@ export function listLibraryUploadedAssets(filters?: {
   });
 }
 
-const ALLOWED_MIMES: Record<string, string> = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-  'audio/mpeg': 'mp3',
-  'audio/mp3': 'mp3',
-  'audio/wav': 'wav',
-  'audio/x-wav': 'wav',
-  'audio/ogg': 'ogg',
-  'video/mp4': 'mp4',
-  'video/webm': 'webm',
-  'video/quicktime': 'mov',
-};
-
 export function saveUploadedLibraryAsset(input: {
   name: string;
   category: string;
@@ -163,26 +153,12 @@ export function saveUploadedLibraryAsset(input: {
 }): LibraryUploadedAsset {
   ensureStorage();
 
-  const mime = String(input.mimeType || '').toLowerCase();
-  const ext = ALLOWED_MIMES[mime];
-  if (!ext) {
-    throw new Error('Unsupported file type. Upload JPG, PNG, WebP, MP3, WAV, OGG, MP4, or WebM.');
-  }
-
-  const rawData = String(input.dataUrl || '');
-  const commaIdx = rawData.indexOf(',');
-  if (commaIdx < 0) {
-    throw new Error('Invalid file payload.');
-  }
-  const buf = Buffer.from(rawData.slice(commaIdx + 1), 'base64');
-  const maxBytes = 25 * 1024 * 1024;
-  if (buf.length === 0 || buf.length > maxBytes) {
-    throw new Error('File size must be between 1 byte and 25 MB.');
-  }
-
-  const id = `lib-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const { extension: ext, mime, bytes: buf, category } = decodeLibraryUpload(
+    String(input.name || ''), String(input.mimeType || ''), String(input.dataUrl || ''),
+  );
+  const id = `lib-${randomUUID()}`;
   const safeFileName = `${id}.${ext}`;
-  fs.writeFileSync(path.join(UPLOADS_DIR, safeFileName), buf);
+  const filePath = path.join(UPLOADS_DIR, safeFileName);
   const publicUrl = `/api/library-uploads/${safeFileName}`;
 
   const isImage = mime.startsWith('image/');
@@ -194,12 +170,12 @@ export function saveUploadedLibraryAsset(input: {
     : '/assets/images/cartoon_adventure_thumb_1794924309261.jpg';
 
   const resolvedCategory = String(
-    input.category || (isImage ? 'image' : isAudio ? 'sfx' : 'video')
+    input.category || category
   ).toLowerCase();
 
   const record: LibraryUploadedAsset = {
     id,
-    name: String(input.name || `asset.${ext}`).trim().slice(0, 120),
+    name: String(input.name || '').trim().slice(0, 120) || `asset.${ext}`,
     category: resolvedCategory,
     subcategory: String(input.subcategory || 'Uploaded Studio Asset').trim(),
     source: 'upload',
@@ -210,7 +186,9 @@ export function saveUploadedLibraryAsset(input: {
     url: publicUrl,
     thumbnail: defaultThumb,
     description: String(input.description || 'Uploaded into Unified Cartoon Production Library.').trim(),
-    tags: Array.isArray(input.tags) && input.tags.length > 0 ? input.tags : ['Uploaded', ext.toUpperCase()],
+    tags: Array.isArray(input.tags) && input.tags.length > 0
+      ? input.tags.slice(0, 25).map(tag => String(tag).slice(0, 100))
+      : ['Uploaded', ext.toUpperCase()],
     projectId: input.projectId ? String(input.projectId).trim() : undefined,
     projectName: input.projectName ? String(input.projectName).trim() : undefined,
     timelineTrack: resolveTimelineTrack(resolvedCategory),
@@ -219,15 +197,30 @@ export function saveUploadedLibraryAsset(input: {
 
   const all = readDb();
   all.unshift(record);
-  writeDb(all);
+  fs.writeFileSync(filePath, buf, { flag: 'wx' });
+  try {
+    writeDb(all);
+  } catch (error) {
+    fs.rmSync(filePath, { force: true });
+    throw error;
+  }
   return record;
+}
+
+export function getStoredLibraryAsset(id: string) {
+  const asset = readDb().find(item => item.id === id);
+  const match = asset?.url.match(/^\/api\/(library-uploads|cartoon-assets)\/([a-z0-9_.-]+)$/i);
+  if (!asset || !match || match[2] === '.' || match[2] === '..') return undefined;
+  const filePath = path.join(DATA_DIR, match[1], match[2]);
+  if (!fs.statSync(filePath, { throwIfNoEntry: false })?.isFile()) return undefined;
+  return { asset, filePath };
 }
 
 export function registerExistingLibraryAsset(input: {
   name: string;
   category: string;
   subcategory?: string;
-  source?: 'upload' | 'ai_generated';
+  source?: LibraryUploadedAsset['source'];
   format: string;
   mimeType: string;
   sizeBytes?: number;
@@ -290,6 +283,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
   aspectRatio?: string;
   language?: string;
   thumbnailUrl?: string;
+  storyProduction?: unknown;
   referenceImages?: Array<{ id: string; name: string; url: string; mimeType: string; sizeBytes: number }>;
   characters?: Array<{ id: string; name: string; role: string; appearancePrompt: string; avatarUrl: string; voiceStyle?: string }>;
   scenes?: Array<{
@@ -300,7 +294,10 @@ export function syncCartoonProjectAssetsToLibrary(project: {
     storyImageUrl: string;
     imageStatus: string;
     videoClipStatus: string;
+    videoClipUrl?: string;
     dialogueText: string;
+    dialogueAudioUrl?: string;
+    soundtrackUrl?: string;
     dialogueAudioStatus: string;
     musicSfxPreset: string;
     musicSfxStatus: string;
@@ -366,6 +363,28 @@ export function syncCartoonProjectAssetsToLibrary(project: {
   // 3. Scenes -> Images, Backgrounds, Video Clips, Voices, Music, SFX, VFX, Animation, Subtitles
   for (const scene of project.scenes || []) {
     const thumb = scene.storyImageUrl || project.thumbnailUrl || '/assets/images/cartoon_adventure_thumb_1794924309261.jpg';
+
+    if (project.storyProduction) {
+      const files = [
+        { url: scene.imageStatus === 'ready' ? scene.storyImageUrl : undefined, category: 'image', format: 'PNG', mimeType: 'image/png', label: 'Cartoon frame' },
+        { url: scene.videoClipStatus === 'ready' ? scene.videoClipUrl : undefined, category: 'video', format: 'MP4', mimeType: 'video/mp4', label: 'Cartoon clip' },
+        { url: scene.dialogueAudioStatus === 'ready' ? scene.dialogueAudioUrl : undefined, category: 'voice', format: 'WAV', mimeType: 'audio/wav', label: 'Dialogue' },
+        { url: scene.soundtrackUrl, category: 'sfx', format: 'WAV', mimeType: 'audio/wav', label: 'Scene soundtrack' },
+      ];
+      for (const file of files) {
+        if (!file.url) continue;
+        const sizeBytes = fs.statSync(path.join(DATA_DIR, 'cartoon-assets', path.basename(file.url)), { throwIfNoEntry: false })?.size;
+        if (!sizeBytes) continue;
+        registerExistingLibraryAsset({
+          name: 'Scene ' + scene.sceneNumber + ' · ' + scene.title + ' · ' + file.label,
+          category: file.category, subcategory: file.label, source: 'rendered', format: file.format,
+          mimeType: file.mimeType, sizeBytes, url: file.url, thumbnail: thumb,
+          description: scene.description, tags: ['Cartoon Creator', file.label, styleTag], projectId, projectName,
+        });
+        count++;
+      }
+      continue;
+    }
 
     if (scene.imageStatus === 'ready' && scene.storyImageUrl) {
       registerExistingLibraryAsset({

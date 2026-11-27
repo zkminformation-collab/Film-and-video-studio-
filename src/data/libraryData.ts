@@ -20,7 +20,7 @@ export type AssetCategory =
   | '3d_asset'
   | 'project';
 
-export type AssetSource = 'builtin' | 'licensed' | 'upload' | 'ai_generated';
+export type AssetSource = 'builtin' | 'licensed' | 'upload' | 'ai_generated' | 'rendered';
 
 export interface AssetLicense {
   type: 'Royalty-Free Worldwide' | 'Creative Commons CC0' | 'Commercial Studio License' | 'AI Studio Creative License' | 'Studio Master Proprietary';

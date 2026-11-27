@@ -8,6 +8,9 @@ import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { generateFreeScreenplay, ScreenplayProviderError } from './server/openRouterScreenplay.ts';
+import { createCartoonStoryPlan, readCartoonStoryRequest } from './server/cartoonStoryPlan.ts';
+import { LibraryRenderError, renderLibraryVideo } from './server/libraryVideoRenderer.ts';
+import { LIBRARY_MEDIA_FORMATS, type LibraryFileExtension } from './src/data/libraryMediaFormats.ts';
 import { builtinProductionAssets } from './src/data/builtinProductionAssets';
 import { productionAssetVariant, variantsPerAsset } from './src/data/productionAssetVariants';
 import { renderProductionVariant } from './server/productionAssetVariants';
@@ -37,6 +40,8 @@ import {
 } from './server/freeAssetLibraryStore.ts';
 import {
   SUPPORTED_CATEGORY_FORMATS,
+  normalizeCategory,
+  validateFormatForCategory,
   importUnifiedMediaAsset,
   listUnifiedMediaAssets,
   getUnifiedMediaAsset,
@@ -109,6 +114,10 @@ import {
   removeReferenceAssetFromProject,
   runCartoonWorkflowStep,
   parseCartoonChapters,
+  saveCartoonStoryPlan,
+  openCartoonStoryProduction,
+  preparePlannedCartoonMedia,
+  uploadCartoonSceneAudio,
   updateCartoonScene,
   runQualityInspection,
   recomputeProjectSteps,
@@ -239,7 +248,22 @@ app.use('/assets/images', express.static(path.resolve(__dirname, 'src/assets/ima
 app.use('/src/assets', express.static(path.resolve(__dirname, 'src/assets')));
 app.use('/assets', express.static(path.resolve(__dirname, 'public/assets')));
 app.use('/api/cartoon-assets', express.static(path.resolve(process.cwd(), '.data/cartoon-assets')));
-app.use('/api/library-uploads', express.static(path.resolve(process.cwd(), '.data/library-uploads')));
+app.use('/api/library-uploads', express.static(path.resolve(process.cwd(), '.data/library-uploads'), {
+  setHeaders(res, filePath) {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    const ext = path.extname(filePath).slice(1) as LibraryFileExtension;
+    if (Object.hasOwn(LIBRARY_MEDIA_FORMATS, ext)) {
+      const mime = LIBRARY_MEDIA_FORMATS[ext].mime;
+      res.setHeader('Content-Type', mime);
+      if (!/^(image|video|audio)\//.test(mime)) {
+        res.setHeader('Content-Disposition', 'attachment');
+      }
+    }
+  },
+}));
+app.use('/api/library-uploads', (_req, res) => {
+  res.status(404).json({ success: false, error: 'Library file not found. It may need to be uploaded again.' });
+});
 
 // Shared Gemini Client on server-side
 const apiKey = process.env.GEMINI_API_KEY;
@@ -3329,6 +3353,38 @@ app.patch('/api/cartoon-projects/:id', (req, res) => {
   }
 });
 
+app.post('/api/cartoon-projects/:id/story-plan', async (req, res) => {
+  try {
+    const project = getCartoonProject(req.params.id);
+    if (!project) return res.status(404).json({ success: false, error: 'Cartoon project not found.' });
+    if (project.storyProduction) throw new Error('Open the parent project to plan a new story.');
+    const request = readCartoonStoryRequest(req.body || {});
+    const textProvider = ai;
+    const plan = await createCartoonStoryPlan(request, {
+      language: project.language, style: project.animationStyle, aspect: project.aspectRatio,
+    }, textProvider ? async contents => {
+      const response = await textProvider.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents,
+        config: { responseMimeType: 'application/json', httpOptions: { timeout: 45_000 } },
+      });
+      return response.text || '';
+    } : undefined);
+    res.json({ success: true, project: saveCartoonStoryPlan(project.id, plan) });
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error?.message || 'Could not create the story plan.' });
+  }
+});
+
+app.post('/api/cartoon-projects/:id/story-plan/:unitNumber/production', (req, res) => {
+  try {
+    const project = openCartoonStoryProduction(req.params.id, Number(req.params.unitNumber));
+    res.json({ success: true, project });
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error?.message || 'Could not open production.' });
+  }
+});
+
 app.post('/api/cartoon-projects/:id/az-step', async (req, res) => {
   try {
     const { azStepNumber, storyPrompt } = req.body || {};
@@ -3343,7 +3399,13 @@ app.post('/api/cartoon-projects/:id/az-step', async (req, res) => {
       }
       return res.json({ success: true, project: rendered });
     }
-    const project = runAzWorkflowStep(req.params.id, stepNum, { storyPrompt });
+    const existing = getCartoonProject(req.params.id);
+    const mediaStep: 6 | 7 | 8 | undefined = [6, 9].includes(stepNum) ? 6
+      : stepNum === 10 ? 7
+      : [5, 12, 17].includes(stepNum) ? 8 : undefined;
+    const project = existing?.storyProduction && mediaStep
+      ? await preparePlannedCartoonMedia(req.params.id, mediaStep, synthesizeCartoonDialogue)
+      : runAzWorkflowStep(req.params.id, stepNum, { storyPrompt });
     const syncedLibraryAssets = syncCartoonProjectAssetsToLibrary(project);
     res.json({ success: true, project, syncedLibraryAssets });
   } catch (err: any) {
@@ -3413,6 +3475,15 @@ app.post('/api/cartoon-projects/:id/run-step', async (req, res) => {
     const existing = getCartoonProject(req.params.id);
     if (!existing) return res.status(404).json({ success: false, error: 'Project not found.' });
 
+    const step = Number(stepNumber);
+    if (existing.storyProduction && (step === 6 || step === 7 || step === 8)) {
+      const project = await preparePlannedCartoonMedia(req.params.id, step, synthesizeCartoonDialogue, {
+        sceneNumber: sceneNumber == null ? undefined : Number(sceneNumber),
+        restartFailedOnly: Boolean(restartFailedOnly),
+      });
+      return res.json({ success: true, project, syncedLibraryAssets: syncCartoonProjectAssetsToLibrary(project) });
+    }
+
     let aiGeneratedStory: string | undefined;
     const promptSeed = String(storyPrompt || existing.storyPrompt || existing.name).trim();
     const chapters = Number(stepNumber) === 3 ? parseCartoonChapters(promptSeed) : [];
@@ -3420,7 +3491,7 @@ app.post('/api/cartoon-projects/:id/run-step', async (req, res) => {
       aiGeneratedStory = chapters.map((chapter) =>
         `${chapter.number}. ${chapter.title} — ${chapter.description}`
       ).join('\n');
-    } else if (Number(stepNumber) === 3 && ai) {
+    } else if (step === 3 && ai && !existing.storyProduction) {
       try {
         const response = await ai.models.generateContent({
           model: 'gemini-4-hydrogen',
@@ -3453,6 +3524,18 @@ app.post('/api/cartoon-projects/:id/sync-library', (req, res) => {
   }
   const syncedLibraryAssets = syncCartoonProjectAssetsToLibrary(project);
   res.json({ success: true, projectId: project.id, syncedLibraryAssets });
+});
+
+app.post('/api/cartoon-projects/:id/scenes/:sceneNumber/:audioType(dialogue-audio|soundtrack)', async (req, res) => {
+  try {
+    const project = await uploadCartoonSceneAudio(
+      req.params.id, Number(req.params.sceneNumber), req.body || {},
+      req.params.audioType === 'soundtrack' ? 'soundtrack' : 'dialogue',
+    );
+    res.json({ success: true, project });
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error?.message || 'Could not upload dialogue audio.' });
+  }
 });
 
 app.post('/api/cartoon-projects/:id/scenes/:sceneNumber/update', (req, res) => {
@@ -3591,33 +3674,48 @@ app.post('/api/library/assets/upload', (req, res) => {
   try {
     const { name, category, subcategory, mimeType, dataUrl, description, tags, projectId, projectName, license_name, commercial_use, attribution } = req.body || {};
     const uploaded = saveUploadedLibraryAsset({
-      name,
-      category,
-      subcategory,
-      mimeType,
-      dataUrl,
-      description,
-      tags,
-      projectId,
-      projectName,
+      name, category, subcategory, mimeType, dataUrl, description, tags, projectId, projectName,
     });
-    const ext = (uploaded.format || 'png').toLowerCase();
-    const unified = importUnifiedMediaAsset({
-      id: uploaded.id,
-      project_id: projectId || 'default-project',
-      name: uploaded.name,
-      category: category || 'images',
-      file_type: ext,
-      storage_path: uploaded.url,
-      source: 'User Upload',
-      preview_url: uploaded.thumbnail || uploaded.url,
-      license_name: license_name || 'Studio Master Proprietary',
-      commercial_use: commercial_use || 'yes',
-      attribution: attribution || 'User Upload',
-    });
-    res.json({ success: true, asset: uploaded, unifiedAsset: unified.asset, linkedProjects: unified.linkedProjects });
+    try {
+      const ext = uploaded.format.toLowerCase() as LibraryFileExtension;
+      const requested = normalizeCategory(uploaded.category);
+      const fallback = normalizeCategory(LIBRARY_MEDIA_FORMATS[ext].category);
+      const candidates = [requested, fallback, ...Object.keys(SUPPORTED_CATEGORY_FORMATS)] as Array<keyof typeof SUPPORTED_CATEGORY_FORMATS>;
+      const unifiedCategory = candidates.find(candidate => validateFormatForCategory(candidate, ext)) || requested;
+      const unified = importUnifiedMediaAsset({
+        id: uploaded.id,
+        project_id: projectId || 'default-project',
+        name: uploaded.name,
+        category: unifiedCategory,
+        file_type: ext,
+        storage_path: uploaded.url,
+        source: 'User Upload',
+        preview_url: uploaded.thumbnail,
+        license_name: license_name || 'Studio Master Proprietary',
+        commercial_use: commercial_use || 'yes',
+        attribution: attribution || 'User Upload',
+        file_size: uploaded.sizeBytes,
+      });
+      res.json({ success: true, asset: uploaded, unifiedAsset: unified.asset, linkedProjects: unified.linkedProjects });
+    } catch (error) {
+      deleteUploadedLibraryAsset(uploaded.id);
+      throw error;
+    }
   } catch (err: any) {
     res.status(400).json({ success: false, error: err?.message || 'Asset upload failed.' });
+  }
+});
+
+app.post('/api/library/render-video', async (req, res) => {
+  try {
+    const result = await renderLibraryVideo(req.body || {});
+    res.json({ success: true, ...result });
+  } catch (error) {
+    if (error instanceof LibraryRenderError) {
+      return res.status(error.status).json({ success: false, error: error.message });
+    }
+    console.error('Library video could not be saved:', error);
+    res.status(500).json({ success: false, error: 'The rendered video could not be saved.' });
   }
 });
 

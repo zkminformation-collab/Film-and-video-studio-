@@ -45,14 +45,14 @@ interface UnifiedMediaDb {
 
 export const SUPPORTED_CATEGORY_FORMATS: Record<UnifiedMediaCategory, string[]> = {
   animation: ['json', 'lottie', 'gif', 'mp4'],
-  vfx: ['mp4', 'mov', 'webm', 'png'],
+  vfx: ['mp4', 'mov', 'webm', 'png', 'jpg', 'jpeg', 'webp', 'gif'],
   '3d_assets': ['glb', 'gltf', 'fbx', 'obj'],
   images: ['png', 'jpg', 'jpeg', 'webp'],
   audio: ['mp3', 'wav', 'ogg', 'm4a'],
   video: ['mp4', 'mov', 'webm'],
-  textures: ['png', 'jpg', 'exr', 'hdr'],
+  textures: ['png', 'jpg', 'jpeg', 'webp', 'exr', 'hdr'],
   fonts: ['ttf', 'otf', 'woff2'],
-  projects: ['json', 'zip', 'fvs'],
+  projects: ['json', 'zip', 'fvs', 'srt', 'vtt', 'cube'],
 };
 
 const DATA_DIR = path.resolve(process.cwd(), '.data');
@@ -78,7 +78,9 @@ function readDb(): UnifiedMediaDb {
 
 function writeDb(db: UnifiedMediaDb): void {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
+  const tempPath = DB_FILE + '.tmp';
+  fs.writeFileSync(tempPath, JSON.stringify(db, null, 2), 'utf-8');
+  fs.renameSync(tempPath, DB_FILE);
 }
 
 export function validateSafeExternalUrl(rawUrl: string): { valid: boolean; reason?: string } {
@@ -112,7 +114,7 @@ export function validateSafeExternalUrl(rawUrl: string): { valid: boolean; reaso
 
 export function normalizeCategory(raw: string): UnifiedMediaCategory {
   const s = String(raw || '').toLowerCase().trim().replace(/\s+/g, '_');
-  if (s in SUPPORTED_CATEGORY_FORMATS) return s as UnifiedMediaCategory;
+  if (Object.hasOwn(SUPPORTED_CATEGORY_FORMATS, s)) return s as UnifiedMediaCategory;
   if (s.includes('3d')) return '3d_assets';
   if (s.includes('vfx') || s.includes('effect')) return 'vfx';
   if (s.includes('anim') || s.includes('lottie')) return 'animation';

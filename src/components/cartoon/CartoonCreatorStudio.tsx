@@ -45,6 +45,9 @@ export type StepStatus =
   | 'waiting_confirmation'
   | 'locked';
 
+import { CartoonStoryPlanner } from './CartoonStoryPlanner';
+import { STORY_EFFECTS, type CartoonStoryPlan, type CartoonStoryProduction, type CartoonStoryScene } from '../../data/cartoonStoryPlan';
+
 export type ProjectCategory = 'Cartoon Film' | 'Manhwa Animation' | 'Short Cartoon Video';
 
 interface CartoonCharacter {
@@ -81,6 +84,12 @@ interface CartoonSceneItem {
   subtitleStatus: 'pending' | 'ready' | 'missing';
   durationSec: number;
   lastError?: string;
+  production?: CartoonStoryScene;
+  originalImageUrl?: string;
+  imageProvider?: string;
+  videoClipUrl?: string;
+  dialogueAudioUrl?: string;
+  soundtrackUrl?: string;
 }
 
 interface QualityIssueItem {
@@ -124,6 +133,8 @@ interface CartoonFilmProject {
   thumbnailUrl: string;
   chapterUrl?: string;
   chapters?: string[];
+  storyPlan?: CartoonStoryPlan;
+  storyProduction?: CartoonStoryProduction;
   referenceImages?: ReferenceImageAsset[];
   storyPrompt: string;
   fullStory: string;
@@ -350,8 +361,22 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
       advance();
     }, Math.max(2, previewScene.durationSec || 3) * 1000);
 
+    let audio: HTMLAudioElement | undefined;
     let utterance: SpeechSynthesisUtterance | undefined;
-    if (speech && text) {
+    if (previewScene.dialogueAudioUrl) {
+      speechFinished = false;
+      audio = new Audio(previewScene.dialogueAudioUrl);
+      audio.onended = () => {
+        speechFinished = true;
+        advance();
+      };
+      const audioUnavailable = () => {
+        showToast('error', 'Preview dialogue did not play. Check Step 8 audio and try Play again.');
+        setIsPreviewPlaying(false);
+      };
+      audio.onerror = audioUnavailable;
+      void audio.play().catch(audioUnavailable);
+    } else if (speech && text) {
       const languageCodes: Record<string, string> = {
         Kannada: 'kn-IN', English: 'en-US', Hindi: 'hi-IN', Tamil: 'ta-IN', Telugu: 'te-IN',
       };
@@ -374,6 +399,11 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
 
     return () => {
       window.clearTimeout(timer);
+      if (audio) {
+        audio.pause();
+        audio.onended = null;
+        audio.onerror = null;
+      }
       if (utterance) {
         utterance.onend = null;
         utterance.onerror = null;
@@ -388,6 +418,62 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
       return exists ? prev.map((p) => (p.id === updated.id ? updated : p)) : [updated, ...prev];
     });
     setSelectedProjectId(updated.id);
+  };
+
+  const handleStoryPlannerRequest = async (suffix: string, payload?: Record<string, unknown>) => {
+    if (!activeProject) return;
+    setBusyAction('story-plan');
+    try {
+      const response = await fetch('/api/cartoon-projects/' + encodeURIComponent(activeProject.id) + '/story-plan' + suffix, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not update the story plan.');
+      replaceProjectInState(data.project);
+      if (suffix) setActiveStepNumber(5);
+      showToast('success', suffix ? 'Episode or chapter production opened.' : 'Story and scene production plan saved.');
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Could not update the story plan.');
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleSceneProductionAsset = async (
+    projectId: string, sceneNumber: number, action: 'dialogue-audio' | 'soundtrack' | 'update',
+    payload: File | { cartoonEffect: string },
+  ) => {
+    setBusyAction('scene-media-' + sceneNumber);
+    try {
+      let data: Record<string, unknown>;
+      if (payload instanceof File) {
+        if (!payload.size || payload.size > 10 * 1024 * 1024) throw new Error('Choose an audio file up to 10 MB.');
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = reader.onabort = () => reject(new Error('Could not read the audio file.'));
+          reader.readAsDataURL(payload);
+        });
+        data = { name: payload.name, mimeType: payload.type, dataUrl };
+      } else {
+        data = payload;
+      }
+      const response = await fetch('/api/cartoon-projects/' + encodeURIComponent(projectId) + '/scenes/' + sceneNumber + '/' + action, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Could not save scene media.');
+      replaceProjectInState(result.project);
+      const message = action === 'update' ? 'Effect saved. Run Step 7 to render it.'
+        : action === 'soundtrack' ? 'Scene music or sound effect saved.' : 'Scene dialogue saved.';
+      showToast('success', message);
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Could not save scene media.');
+    } finally {
+      setBusyAction(null);
+    }
   };
 
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -457,7 +543,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     let skippedSize = 0;
 
     for (const f of rawFiles) {
-      if (!allowed.has(f.type)) {
+      if (!allowed.has(f.type) && !/\.(?:jpe?g|png|webp)$/i.test(f.name)) {
         skippedType++;
         continue;
       }
@@ -506,14 +592,24 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
         )
       );
 
-      const res = await fetch(`/api/cartoon-projects/${encodeURIComponent(projectId)}/assets`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assets: encoded }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || 'Upload failed');
-      replaceProjectInState(data.project);
+      const errors: string[] = [];
+      let saved = 0;
+      for (const asset of encoded) {
+        try {
+          const response = await fetch(`/api/cartoon-projects/${encodeURIComponent(projectId)}/assets`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ assets: [asset] }),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) throw new Error(data.error || 'Upload failed');
+          replaceProjectInState(data.project);
+          saved += 1;
+        } catch (error) {
+          errors.push(asset.name + ': ' + (error instanceof Error ? error.message : 'Upload failed.'));
+        }
+      }
+      if (errors.length) throw new Error(saved + ' image(s) saved. ' + errors.join(' '));
 
       const skippedNotes: string[] = [];
       if (skippedSize > 0) skippedNotes.push(`${skippedSize} exceeded 10 MB`);
@@ -618,7 +714,13 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
         setIsPreviewPlaying(true);
         showToast('info', 'Status: Preview Ready — Editing Required before final approval.');
       } else {
-        showToast('success', `Step ${stepNumber} updated cleanly.`);
+        const failed = data.project.storyProduction && [6, 7, 8].includes(stepNumber)
+          && data.project.scenes.some((scene: CartoonSceneItem) =>
+            (!extra?.sceneNumber || scene.sceneNumber === extra.sceneNumber) &&
+            (stepNumber === 6 ? scene.imageStatus === 'failed'
+              : stepNumber === 7 ? scene.videoClipStatus === 'failed'
+              : scene.dialogueAudioStatus === 'missing'));
+        showToast(failed ? 'error' : 'success', failed ? 'Some media could not be made. See the scene errors below.' : `Step ${stepNumber} updated cleanly.`);
       }
       return true;
     } catch (err: any) {
@@ -790,16 +892,18 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     setBusyAction('timeline-sync');
     soundFx.playCinematicImpact();
     try {
+      let audioStart = 0;
       for (const sc of project.scenes) {
         addAssetToTimeline({
           id: `cartoon-${project.id}-s${sc.sceneNumber}`,
           name: `${project.name} · Sc ${sc.sceneNumber}: ${sc.title}`,
-          category: 'animation',
+          category: sc.videoClipUrl ? 'video' : 'animation',
           subcategory: project.projectType,
-          source: 'ai_generated',
+          source: sc.videoClipUrl ? 'rendered' : 'ai_generated',
           format: 'MP4',
+          mediaUrl: sc.videoClipUrl,
           resolution: project.aspectRatio === '9:16' ? '720x1280' : '1280x720',
-          duration: `00:0${sc.durationSec}`,
+          duration: '00:' + String(sc.durationSec).padStart(2, '0'),
           size: '4.2 MB',
           thumbnail: sc.storyImageUrl,
           description: sc.description,
@@ -825,13 +929,15 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
             id: `cartoon-vo-${project.id}-s${sc.sceneNumber}-${Date.now()}`,
             trackRole: 'voice',
             name: `Sc ${sc.sceneNumber} Dialogue`,
-            startSec: (sc.sceneNumber - 1) * sc.durationSec,
+            startSec: audioStart,
+            sourceUrl: sc.dialogueAudioUrl,
             durationSec: sc.durationSec,
             color: '#38bdf8',
             dialogueText: sc.dialogueText,
-            language: 'en-US',
+            language: project.language === 'Kannada' ? 'kn-IN' : project.language,
           });
         }
+        audioStart += sc.durationSec;
       }
 
       const res = await fetch(`/api/cartoon-projects/${encodeURIComponent(project.id)}/run-step`, {
@@ -1854,16 +1960,13 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                       <button
                         type="button"
                         disabled={busyAction === 'step-3'}
-                        onClick={async () => {
-                          await handleRunStep(activeProject.id, 3);
-                          setActiveStepNumber(3);
-                        }}
+                        onClick={() => setActiveStepNumber(3)}
                         className={`px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 ${
                           isLight ? 'bg-neutral-950 text-white' : 'bg-amber-500 text-slate-950'
                         }`}
                       >
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>Save Prompt &amp; Generate Full Story (Step 3)</span>
+                        <span>Open Story &amp; Episode Planner (Step 3)</span>
                       </button>
                     </div>
                   </div>
@@ -1872,10 +1975,28 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                 {/* STEP 3: Generate Full Story */}
                 {activeStepNumber === 3 && (
                   <div className="space-y-4">
-                    <div className={`p-4 rounded-xl border text-xs whitespace-pre-line leading-relaxed ${mutedSurface}`}>
-                      {activeProject.fullStory || 'No story generated yet. Click Generate Full Story below.'}
-                    </div>
+                    {activeProject.storyProduction ? (
+                      <div className={`p-4 rounded-xl border text-xs whitespace-pre-line leading-relaxed ${mutedSurface}`}>
+                        {activeProject.storyProduction.storyTitle} · {activeProject.storyProduction.unit.title}
+                        {'\n\n'}{activeProject.fullStory}
+                      </div>
+                    ) : (
+                      <CartoonStoryPlanner key={activeProject.id}
+                        title={activeProject.movieTitle || activeProject.name}
+                        premise={promptDraft} plan={activeProject.storyPlan}
+                        inputClassName={inputCls} disabled={Boolean(busyAction)}
+                        onGenerate={input => handleStoryPlannerRequest('', input)}
+                        onOpen={number => handleStoryPlannerRequest('/' + number + '/production')} />
+                    )}
+                    {!activeProject.storyPlan && !activeProject.storyProduction && activeProject.fullStory && (
+                      <details className={`rounded-xl border p-3 text-xs ${mutedSurface}`}>
+                        <summary className="cursor-pointer font-semibold">Saved story draft</summary>
+                        <p className="mt-2 whitespace-pre-wrap">{activeProject.fullStory}</p>
+                      </details>
+                    )}
                     <div className="flex flex-wrap items-center justify-between gap-2">
+                      {(!activeProject.storyPlan || activeProject.storyProduction) && (
+                        <>
                       <button
                         type="button"
                         onClick={() => void handleRunStep(activeProject.id, 3)}
@@ -1897,6 +2018,8 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                         <span>Continue to Step 4 · Generate Characters</span>
                         <ArrowRight className="w-3.5 h-3.5" />
                       </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1976,7 +2099,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                             : activeStepNumber === 5
                             ? 'Generate / Refresh Storyboard'
                             : activeStepNumber === 6
-                            ? 'Generate All Story Images'
+                            ? activeProject.storyProduction ? 'Generate & Cartoonize Images' : 'Generate All Story Images'
                             : 'Convert All to Cartoon Video'}
                         </button>
                         {activeStepNumber === 7 && (
@@ -2046,6 +2169,10 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                                 </div>
                               </div>
 
+                              {sc.videoClipUrl && activeStepNumber === 7 ? (
+                                <video src={sc.videoClipUrl} controls playsInline preload="metadata"
+                                  className="w-full h-36 rounded-lg bg-black object-contain" />
+                              ) : sc.storyImageUrl ? (
                               <img
                                 src={sc.storyImageUrl}
                                 alt={sc.title}
@@ -2053,6 +2180,9 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                                 onError={(e) => handleImageError(e, sc.title)}
                                 className="w-full h-36 rounded-lg object-cover border border-neutral-200 dark:border-slate-700"
                               />
+                              ) : (
+                                <p className="rounded-lg border border-slate-500/30 px-3 py-5 text-xs">Story image pending</p>
+                              )}
 
                               <div className="text-xs space-y-1">
                                 <div className="opacity-70">
@@ -2070,6 +2200,15 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                                   </span>
                                 </div>
                                 <p className="line-clamp-2 opacity-85">{sc.description}</p>
+                                {sc.production && (
+                                  <details>
+                                    <summary className="cursor-pointer font-semibold">Scene production instructions</summary>
+                                    <p className="mt-2">Image: {sc.production.imagePrompt}</p>
+                                    <p className="mt-1">Audio: {sc.production.audioDirection}</p>
+                                    <p className="mt-1">Effects: {sc.production.effectsDirection}</p>
+                                    {sc.imageProvider && <p className="mt-1">Image source: {sc.imageProvider}</p>}
+                                  </details>
+                                )}
                                 {sc.lastError && (
                                   <div className="text-[11px] text-rose-600 dark:text-rose-400 font-medium">
                                     Error: {sc.lastError}
@@ -2077,9 +2216,19 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                                 )}
                               </div>
 
+                              {sc.production && activeStepNumber === 7 && (
+                                <label className="block text-xs font-semibold">Video effect
+                                  <select value={sc.production.effect} disabled={Boolean(busyAction)}
+                                    className={`ml-2 rounded-lg p-1.5 ${inputCls}`}
+                                    onChange={event => void handleSceneProductionAsset(activeProject.id, sc.sceneNumber, 'update', { cartoonEffect: event.target.value })}>
+                                    {Object.entries(STORY_EFFECTS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                                  </select>
+                                </label>
+                              )}
                               <div className="flex flex-wrap gap-2 pt-1">
                                 <button
                                   type="button"
+                                  disabled={Boolean(busyAction)}
                                   onClick={() =>
                                     void handleRunStep(activeProject.id, 7, {
                                       sceneNumber: sc.sceneNumber,
@@ -2161,6 +2310,23 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                             <div className="opacity-80 truncate">
                               Dialogue: &ldquo;{sc.dialogueText || 'No dialogue'}&rdquo;
                             </div>
+                            {sc.dialogueAudioUrl && <audio controls preload="metadata" src={sc.dialogueAudioUrl} className="max-w-full" />}
+                            {sc.production && (activeStepNumber === 8 || activeStepNumber === 9) && (
+                              <label className="block text-xs font-semibold">
+                                {activeStepNumber === 8 ? 'Upload recorded dialogue' : 'Upload music or sound effect (optional)'}
+                                <input type="file" accept=".wav,.mp3,.m4a,.ogg" disabled={Boolean(busyAction)}
+                                  className="mt-1 block w-full text-xs"
+                                  onChange={event => {
+                                    const file = event.currentTarget.files?.[0];
+                                    event.currentTarget.value = '';
+                                    if (file) void handleSceneProductionAsset(activeProject.id, sc.sceneNumber,
+                                      activeStepNumber === 8 ? 'dialogue-audio' : 'soundtrack', file);
+                                  }} />
+                              </label>
+                            )}
+                            {activeStepNumber === 9 && sc.soundtrackUrl &&
+                              <audio controls preload="metadata" src={sc.soundtrackUrl} className="max-w-full" />}
+                            {activeStepNumber === 8 && sc.lastError && <p className="text-rose-500">{sc.lastError}</p>}
                             <div className="opacity-70 flex flex-wrap gap-2">
                               <span>
                                 Audio:{' '}
@@ -2222,6 +2388,10 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                     {activeProject.scenes.length > 0 && (
                       <div className="rounded-2xl overflow-hidden border border-neutral-800 bg-black text-white">
                         <div className="relative h-72 sm:h-80 flex items-center justify-center">
+                          {previewScene?.videoClipUrl ? (
+                            <video key={previewScene.videoClipUrl + String(isPreviewPlaying)} src={previewScene.videoClipUrl}
+                              autoPlay={isPreviewPlaying} muted playsInline preload="metadata" className="w-full h-full object-contain" />
+                          ) : (
                           <img
                             src={
                               activeProject.scenes[previewSceneIdx]?.storyImageUrl ||
@@ -2231,6 +2401,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                             referrerPolicy="no-referrer"
                             className="w-full h-full object-cover"
                           />
+                          )}
                           <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/30" />
                           <div className="absolute top-3 left-3 text-xs font-mono-cinema bg-black/70 px-2.5 py-1 rounded">
                             Scene {previewSceneIdx + 1}/{activeProject.scenes.length} ·{' '}

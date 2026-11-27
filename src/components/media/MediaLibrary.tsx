@@ -39,6 +39,9 @@ import { FilmProject, StudioModule } from '../../types';
 import { soundFx } from '../../utils/audioSynth';
 import { useAuth, CloudLibraryAsset } from '../../context/AuthContext';
 import { FreeAssetLibraryWorkspace } from './FreeAssetLibraryWorkspace';
+import { isLibraryRenderImage, LibraryVideoComposer } from './LibraryVideoComposer';
+import { isStoredLibraryMedia, LIBRARY_FILE_ACCEPT, MAX_LIBRARY_UPLOAD_BYTES } from '../../data/libraryMediaFormats';
+import type { LibraryUploadedAsset } from '../../../server/mediaLibraryStore.ts';
 import { 
   ASSET_CATEGORIES,
   INITIAL_COLLECTIONS,
@@ -53,6 +56,36 @@ interface MediaLibraryProps {
   activeFilm: FilmProject;
   onSendToEditor?: (asset: UniversalAsset) => void;
   onNavigate?: (module: StudioModule) => void;
+}
+
+function fromLibraryRecord(item: LibraryUploadedAsset): UniversalAsset {
+  return {
+    id: item.id,
+    name: item.name,
+    category: item.category as AssetCategory,
+    subcategory: item.subcategory || 'Uploaded Studio Asset',
+    source: item.source,
+    format: item.format || 'FILE',
+    size: item.size || '1.0 MB',
+    thumbnail: item.thumbnail || '/assets/images/cartoon_adventure_thumb_1794924309261.jpg',
+    mediaUrl: item.url,
+    description: item.description || 'Persisted in Unified Cartoon Production Library.',
+    tags: Array.isArray(item.tags) ? item.tags : ['Uploaded'],
+    projectId: item.projectId || undefined,
+    projectName: item.projectName || undefined,
+    timelineTrack: item.timelineTrack || undefined,
+    license: {
+      type: 'Studio Master Proprietary',
+      commercialUse: true,
+      attribution: 'ZKMAP STUDIO Unified Library',
+      certificateId: `ZK-LIB-${String(item.id).slice(0, 10)}`,
+      verified: true,
+    },
+    specs: { codec: item.format, fps: 24, aspect: '16:9' },
+    isFavorite: false,
+    addedAt: item.addedAt || new Date().toISOString().split('T')[0],
+    usageCount: 1,
+  };
 }
 
 export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendToEditor, onNavigate }) => {
@@ -115,33 +148,7 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
           const existingIds = new Set(prev.map((a) => a.id));
           const mapped: UniversalAsset[] = data.assets
             .filter((item: any) => !existingIds.has(item.id))
-            .map((item: any) => ({
-              id: item.id,
-              name: item.name,
-              category: item.category as AssetCategory,
-              subcategory: item.subcategory || 'Uploaded Studio Asset',
-              source: item.source === 'ai_generated' ? 'ai_generated' : 'upload',
-              format: item.format || 'FILE',
-              size: item.size || '1.0 MB',
-              thumbnail: item.thumbnail || '/assets/images/cartoon_adventure_thumb_1794924309261.jpg',
-              mediaUrl: item.url,
-              description: item.description || 'Persisted in Unified Cartoon Production Library.',
-              tags: Array.isArray(item.tags) ? item.tags : ['Uploaded'],
-              projectId: item.projectId || undefined,
-              projectName: item.projectName || undefined,
-              timelineTrack: item.timelineTrack || undefined,
-              license: {
-                type: 'Studio Master Proprietary',
-                commercialUse: true,
-                attribution: 'ZKMAP STUDIO Unified Library',
-                certificateId: `ZK-LIB-${String(item.id).slice(0, 10)}`,
-                verified: true,
-              },
-              specs: { codec: item.format, fps: 24, aspect: '16:9' },
-              isFavorite: false,
-              addedAt: item.addedAt || new Date().toISOString().split('T')[0],
-              usageCount: 1,
-            }));
+            .map(fromLibraryRecord);
           return mapped.length > 0 ? [...mapped, ...prev] : prev;
         });
       })
@@ -174,7 +181,9 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
   >([]);
 
   // Category-Aware Upload Modal State
-  const [uploadCategory, setUploadCategory] = useState<AssetCategory>('character');
+  const [uploadCategory, setUploadCategory] = useState<AssetCategory | 'auto'>('auto');
+  const [uploadErrors, setUploadErrors] = useState<string[]>([]);
+  const [videoComposer, setVideoComposer] = useState<{ initialImage?: UniversalAsset } | null>(null);
   const [uploadTags, setUploadTags] = useState<string>('Cartoon, Studio');
   const [uploadDescription, setUploadDescription] = useState<string>('');
   const [isUploading, setIsUploading] = useState<boolean>(false);
@@ -418,7 +427,7 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
 
   const handleDownloadAsset = (asset: UniversalAsset) => {
     soundFx.playScannerBeep();
-    if (asset.category === 'color') {
+    if (!isStoredLibraryMedia(asset.mediaUrl) && asset.category === 'color') {
       let cubeContent = `# Film & Video Studio 3D LUT\n# Title: ${asset.name}\nLUT_3D_SIZE 33\n`;
       for (let r = 0; r < 33; r += 8) {
         for (let g = 0; g < 33; g += 8) {
@@ -437,7 +446,7 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       notify(`Downloaded .CUBE 3D LUT for "${asset.name}"`);
-    } else if (asset.category === 'subtitle') {
+    } else if (!isStoredLibraryMedia(asset.mediaUrl) && asset.category === 'subtitle') {
       const srtContent = `1\n00:00:00,000 --> 00:00:05,000\n${asset.description || asset.name}\n`;
       const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -505,135 +514,94 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
     }
   };
 
-  const handleFileUpload = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-    explicitCategory?: AssetCategory
-  ) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+  const addLibraryRecord = (record: LibraryUploadedAsset) => {
+    const asset = fromLibraryRecord(record);
+    setCatalog(prev => [asset, ...prev.filter(item => item.id !== asset.id)]);
+    setSelectedAsset(asset);
+    return asset;
+  };
+
+  const openUpload = (category: AssetCategory | 'auto') => {
+    setUploadErrors([]);
+    setUploadCategory(category);
+    setLibraryView('studio_vault');
+    setShowUploadModal(true);
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
 
     setIsUploading(true);
+    setUploadErrors([]);
     soundFx.playShutterSound();
+    const errors: string[] = [];
     let uploadedCount = 0;
+    const tags = uploadTags.split(',').map(value => value.trim()).filter(Boolean);
 
     try {
-      const customTags = uploadTags
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean);
+      for (const file of files) {
+        try {
+          if (!file.size || file.size > MAX_LIBRARY_UPLOAD_BYTES) {
+            throw new Error('File size must be between 1 byte and 25 MB.');
+          }
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = reader.onabort = () => reject(new Error('Could not read this file.'));
+            reader.readAsDataURL(file);
+          });
+          const response = await fetch('/api/library/assets/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: file.name,
+              category: uploadCategory === 'auto' ? undefined : uploadCategory,
+              mimeType: file.type,
+              dataUrl,
+              description: uploadDescription.trim(),
+              tags,
+            }),
+          });
+          const data = await response.json().catch(() => null);
+          if (!response.ok || !data?.success) {
+            throw new Error(data?.error || (response.status === 413 ? 'File is too large.' : 'Upload failed. Try again.'));
+          }
 
-      for (const file of Array.from(files)) {
-        const isImg = file.type.startsWith('image');
-        const isAud = file.type.startsWith('audio');
-        const isVid = file.type.startsWith('video');
-
-        const chosenCat: AssetCategory =
-          explicitCategory ||
-          (selectedCategory !== 'all'
-            ? selectedCategory
-            : isVid
-            ? 'video'
-            : isAud
-            ? 'sfx'
-            : isImg
-            ? 'image'
-            : 'project');
-
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result || ''));
-          reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
-          reader.readAsDataURL(file);
-        });
-
-        const res = await fetch('/api/library/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: file.name,
-            category: chosenCat,
-            subcategory: 'Uploaded Studio Asset',
-            mimeType: file.type,
-            dataUrl,
-            description:
-              uploadDescription.trim() ||
-              `Uploaded into Unified Cartoon Production Library (${chosenCat}).`,
-            tags:
-              customTags.length > 0
-                ? [...customTags, chosenCat]
-                : ['Uploaded', chosenCat, file.type.split('/')[1]?.toUpperCase() || 'FILE'],
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || `Upload failed for ${file.name}.`);
-        }
-
-        const saved = data.asset;
-        const newAsset: UniversalAsset = {
-          id: saved.id,
-          name: saved.name,
-          category: saved.category as AssetCategory,
-          subcategory: saved.subcategory,
-          source: 'upload',
-          format: saved.format,
-          size: saved.size,
-          thumbnail: saved.thumbnail,
-          mediaUrl: saved.url,
-          description: saved.description,
-          tags: saved.tags,
-          license: {
-            type: 'Studio Master Proprietary',
-            commercialUse: true,
-            attribution: 'ZKMAP STUDIO Unified Library',
-            certificateId: `ZK-LIB-${String(saved.id).slice(0, 10)}`,
-            verified: true,
-          },
-          specs: { codec: saved.format, fps: 24, aspect: '16:9' },
-          isFavorite: false,
-          addedAt: saved.addedAt,
-          usageCount: 1,
-        };
-
-        setCatalog((prev) => [newAsset, ...prev]);
-        setSelectedAsset(newAsset);
-        uploadedCount += 1;
-
-        if (firebaseUser) {
-          const fsCat: CloudLibraryAsset['category'] = isVid
-            ? 'footage'
-            : isAud
-            ? 'audio'
-            : isImg
-            ? 'stills'
-            : 'footage';
-          saveLibraryAsset({
-            id: newAsset.id,
-            name: newAsset.name,
-            category: fsCat,
-            format: newAsset.format,
-            duration: newAsset.duration || '00:08',
-            size: newAsset.size,
-            provider: 'Unified Studio Library',
-          }).catch(() => {});
+          const record = data.asset as LibraryUploadedAsset;
+          const newAsset = addLibraryRecord(record);
+          uploadedCount += 1;
+          if (firebaseUser) {
+            const cloudCategory: CloudLibraryAsset['category'] = record.category === 'vfx' ? 'vfx'
+              : record.mimeType.startsWith('image/') ? 'stills'
+              : record.mimeType.startsWith('audio/') ? 'audio'
+              : 'footage';
+            saveLibraryAsset({
+              id: newAsset.id,
+              name: newAsset.name,
+              category: cloudCategory,
+              format: newAsset.format,
+              duration: newAsset.duration || '00:08',
+              size: newAsset.size,
+              url: newAsset.mediaUrl,
+              thumbnail: newAsset.thumbnail,
+              provider: 'Unified Studio Library',
+            }).catch(() => {});
+          }
+        } catch (error) {
+          errors.push(file.name + ': ' + (error instanceof Error ? error.message : 'Upload failed.'));
         }
       }
-
-      setShowUploadModal(false);
-      setUploadDescription('');
-      notify(
-        uploadedCount === 1
-          ? `Saved 1 asset to Unified Production Library.`
-          : `Saved ${uploadedCount} assets to Unified Production Library.`
-      );
-    } catch (err: any) {
-      notify(
-        err?.message ||
-          'Could not upload file. Supported: JPG, PNG, WebP, MP3, WAV, OGG, MP4, WebM (max 25 MB).'
-      );
+      setUploadErrors(errors);
+      if (uploadedCount > 0) notify('Saved ' + uploadedCount + ' asset(s) to the Studio Media Vault.');
+      if (!errors.length) {
+        setShowUploadModal(false);
+        setUploadDescription('');
+      }
     } finally {
       setIsUploading(false);
-      e.target.value = '';
+      input.value = '';
     }
   };
 
@@ -753,6 +721,10 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
           >
             Studio Media Vault & Uploads
           </button>
+          <button type="button" onClick={() => openUpload('auto')}
+            className="px-3.5 py-1.5 rounded-lg border border-purple-500/40 text-purple-300 text-xs font-semibold">
+            Upload Asset
+          </button>
         </div>
         <FreeAssetLibraryWorkspace
           activeFilm={activeFilm}
@@ -780,7 +752,19 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
         >
           Studio Media Vault & Uploads
         </button>
+        <button type="button" onClick={() => setVideoComposer({})}
+          className="px-3.5 py-1.5 rounded-lg border border-purple-500/40 text-purple-300 text-xs font-semibold">
+          Create MP4 from Images
+        </button>
       </div>
+      {videoComposer && (
+        <LibraryVideoComposer
+          assets={catalog}
+          initialImage={videoComposer.initialImage}
+          onClose={() => setVideoComposer(null)}
+          onRendered={({ asset }) => addLibraryRecord(asset)}
+        />
+      )}
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed top-16 right-6 z-50 p-3 bg-purple-950/90 border border-purple-500/50 text-white rounded-xl text-xs font-mono flex items-center gap-2 shadow-2xl shadow-purple-900/50 animate-in fade-in slide-in-from-top-2">
@@ -837,6 +821,7 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
               { id: 'licensed', label: '2. Licensed Online' },
               { id: 'upload', label: '3. User Uploads' },
               { id: 'ai_generated', label: '4. AI Generated' },
+              { id: 'rendered', label: 'Rendered' },
             ].map((src) => (
               <button
                 key={src.id}
@@ -899,8 +884,7 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
             <button
               onClick={() => {
                 soundFx.playScannerBeep();
-                if (selectedCategory !== 'all') setUploadCategory(selectedCategory);
-                setShowUploadModal(true);
+                openUpload(selectedCategory === 'all' ? 'auto' : selectedCategory);
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-purple-300 border border-purple-500/40 rounded-xl text-xs font-bold cursor-pointer transition-all active:scale-95"
             >
@@ -1237,12 +1221,17 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
               {/* Main Monitor Box / Preview Area */}
               <div className="space-y-4 text-xs">
                 <div className="aspect-video bg-black rounded-xl overflow-hidden border border-purple-500/30 relative shadow-2xl flex items-center justify-center">
-                  <img
-                    src={selectedAsset.thumbnail}
-                    alt={selectedAsset.name}
-                    referrerPolicy="no-referrer"
-                    className={`w-full h-full object-cover ${selectedAsset.specs.lutFilter || ''}`}
-                  />
+                  {isStoredLibraryMedia(selectedAsset.mediaUrl) && /\.(mp4|mov|webm)$/i.test(selectedAsset.mediaUrl) ? (
+                    <video key={selectedAsset.mediaUrl} src={selectedAsset.mediaUrl} controls playsInline preload="metadata"
+                      className="w-full h-full object-contain" />
+                  ) : (
+                    <img
+                      src={selectedAsset.thumbnail}
+                      alt={selectedAsset.name}
+                      referrerPolicy="no-referrer"
+                      className={`w-full h-full object-cover ${selectedAsset.specs.lutFilter || ''}`}
+                    />
+                  )}
 
                   <div className="absolute top-2 left-2 bg-black/85 text-[10px] font-mono text-cyan-300 px-2 py-0.5 rounded border border-cyan-500/30 uppercase">
                     {selectedAsset.category} · {resolveTimelineTrackLabel(selectedAsset)}
@@ -1341,6 +1330,12 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
                     <span>Add Directly to Video Editor Timeline</span>
                   </button>
 
+                  {isLibraryRenderImage(selectedAsset) && (
+                    <button type="button" onClick={() => setVideoComposer({ initialImage: selectedAsset })}
+                      className="w-full rounded-xl border border-purple-500/40 p-2.5 text-purple-300 hover:bg-purple-950">
+                      Create MP4 with This Image
+                    </button>
+                  )}
                   <div className="grid grid-cols-2 gap-2">
                     {(selectedAsset.category === 'music' || selectedAsset.category === 'sfx' || selectedAsset.category === 'voice') && (
                       <button
@@ -1622,6 +1617,7 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
                 <span>Upload to Cartoon Production Library</span>
               </div>
               <button
+                disabled={isUploading}
                 onClick={() => setShowUploadModal(false)}
                 className="text-slate-400 hover:text-white"
               >
@@ -1636,9 +1632,11 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
                 </label>
                 <select
                   value={uploadCategory}
-                  onChange={(e) => setUploadCategory(e.target.value as AssetCategory)}
+                  onChange={(e) => setUploadCategory(e.target.value as AssetCategory | 'auto')}
+                  disabled={isUploading}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white outline-none focus:border-purple-500"
                 >
+                  <option value="auto">Detect from file type</option>
                   {ASSET_CATEGORIES.map((cat) => (
                     <option key={cat.id} value={cat.id}>
                       {cat.icon} {cat.name}
@@ -1679,21 +1677,27 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
                   {isUploading ? 'Uploading & Saving...' : 'Select File(s) to Upload'}
                 </span>
                 <span className="text-[10px] text-slate-400 font-mono text-center">
-                  JPG, PNG, WebP, MP3, WAV, OGG, MP4, WebM · Max 25 MB per file
+                  Images, video, audio, subtitles, 3D assets and presets · Max 25 MB per file
                 </span>
                 <input
                   type="file"
                   multiple
                   disabled={isUploading}
-                  accept="image/jpeg,image/png,image/webp,audio/mpeg,audio/wav,audio/ogg,video/mp4,video/webm,video/quicktime"
-                  onChange={(e) => handleFileUpload(e, uploadCategory)}
+                  accept={LIBRARY_FILE_ACCEPT}
+                  onChange={handleFileUpload}
                   className="hidden"
                 />
               </label>
             </div>
 
+            {uploadErrors.length > 0 && (
+              <ul role="alert" className="max-h-28 list-disc space-y-1 overflow-y-auto pl-4 text-rose-300">
+                {uploadErrors.map((error, index) => <li className="break-words" key={index}>{error}</li>)}
+              </ul>
+            )}
             <div className="flex justify-end pt-1">
               <button
+                disabled={isUploading}
                 onClick={() => setShowUploadModal(false)}
                 className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl font-semibold"
               >

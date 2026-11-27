@@ -1,8 +1,12 @@
 import fs from 'fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { STORY_EFFECTS, type CartoonStoryPlan, type CartoonStoryProduction, type CartoonStoryScene } from '../src/data/cartoonStoryPlan.ts';
+import { cartoonizeSceneImage, encodePlannedCartoonScene } from './cartoonPlannedMedia.ts';
+import { generateStudioImages } from './aiImageStudioStore.ts';
+import { decodeLibraryUpload } from './libraryUploadFormat.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -90,6 +94,12 @@ export interface CartoonSceneItem {
   subtitleStatus: 'pending' | 'ready' | 'missing';
   durationSec: number;
   lastError?: string;
+  production?: CartoonStoryScene;
+  originalImageUrl?: string;
+  imageProvider?: string;
+  videoClipUrl?: string;
+  dialogueAudioUrl?: string;
+  soundtrackUrl?: string;
 }
 
 export interface QualityIssueItem {
@@ -174,6 +184,8 @@ export interface CartoonFilmProject {
   thumbnailUrl: string;
   chapterUrl?: string;
   chapters?: string[];
+  storyPlan?: CartoonStoryPlan;
+  storyProduction?: CartoonStoryProduction;
   referenceImages?: ReferenceImageAsset[];
   storyPrompt: string;
   fullStory: string;
@@ -232,10 +244,11 @@ const CARTOON_IMAGE_POOL = [
 ];
 
 function findSceneImage(url: string) {
-  const match = /^\/(api\/cartoon-assets|src\/assets\/images|assets\/images)\/([^/]+)$/.exec(url);
-  if (!match || match[2] === '.' || match[2] === '..' || match[2].includes('\\')) return undefined;
-  const roots = match[1] === 'api/cartoon-assets' ? [ASSETS_DIR] : match[1] === 'assets/images'
-    ? ['public/assets/images', 'src/assets/images']
+  const match = /^\/(api\/cartoon-assets|api\/library-uploads|src\/assets\/images|assets\/images)\/([^/]+)$/.exec(url);
+  if (!match || !/^[a-z0-9_.-]+\.(?:jpe?g|png|webp)$/i.test(match[2])) return undefined;
+  const roots = match[1] === 'api/cartoon-assets' ? [ASSETS_DIR]
+    : match[1] === 'api/library-uploads' ? [path.join(DATA_DIR, 'library-uploads')]
+    : match[1] === 'assets/images' ? ['public/assets/images', 'src/assets/images']
     : ['src/assets/images'];
   for (const root of roots) {
     const filePath = path.resolve(root, match[2]);
@@ -1138,7 +1151,7 @@ function loadProjectsDb(): CartoonFilmProject[] {
   try {
     const raw = fs.readFileSync(DB_FILE, 'utf8');
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
+    if (Array.isArray(parsed)) {
       return parsed.map((p) => recomputeProjectSteps(p));
     }
   } catch {
@@ -1151,7 +1164,9 @@ function loadProjectsDb(): CartoonFilmProject[] {
 
 function saveProjectsDb(projects: CartoonFilmProject[]) {
   ensureDirs();
-  fs.writeFileSync(DB_FILE, JSON.stringify(projects, null, 2), 'utf8');
+  const tempFile = DB_FILE + '.tmp';
+  fs.writeFileSync(tempFile, JSON.stringify(projects, null, 2), 'utf8');
+  fs.renameSync(tempFile, DB_FILE);
 }
 
 export function listCartoonProjects(): CartoonFilmProject[] {
@@ -1176,7 +1191,7 @@ export function createCartoonProject(input: {
   resolution?: '1280x720' | '1920x1080' | '3840x2160';
   frameRate?: 24 | 25 | 30 | 60;
   storyPrompt: string;
-}): CartoonFilmProject {
+}, production?: CartoonStoryProduction): CartoonFilmProject {
   const all = loadProjectsDb();
   const now = new Date().toISOString();
   const projectType: ProjectCategory =
@@ -1192,8 +1207,34 @@ export function createCartoonProject(input: {
 
   const cleanNum = String(all.length + 1).padStart(3, '0');
   const cleanName = String(input.name || `Project ${cleanNum} – ${projectType}`).trim().slice(0, 120);
+  const id = 'proj-' + randomUUID();
+  const plannedScenes: CartoonSceneItem[] = production?.unit.scenes.map((scene, index) => ({
+    id: id + '-sc-' + (index + 1),
+    sceneNumber: index + 1,
+    orderIndex: index + 1,
+    title: scene.title,
+    description: scene.location + ' — ' + scene.action,
+    framing: scene.framing,
+    characterIds: [],
+    characterSeedUsed: 0,
+    production: scene,
+    storyImageUrl: '',
+    imageStatus: 'pending',
+    videoClipStatus: 'pending',
+    dialogueText: scene.dialogue,
+    dialogueAudioStatus: 'pending',
+    musicSfxPreset: scene.audioDirection,
+    musicSfxStatus: 'pending',
+    vfxPreset: scene.effectsDirection,
+    vfxStatus: 'pending',
+    syncOffsetMs: 0,
+    syncStatus: 'pending',
+    subtitleText: scene.subtitle,
+    subtitleStatus: 'ready',
+    durationSec: scene.seconds,
+  })) || [];
   const created = recomputeProjectSteps({
-    id: `proj-${Date.now().toString(36)}`,
+    id,
     name: cleanName,
     movieTitle: String(input.movieTitle || cleanName).trim().slice(0, 120),
     projectType,
@@ -1204,12 +1245,14 @@ export function createCartoonProject(input: {
     resolution: input.resolution || '1920x1080',
     frameRate: input.frameRate || 24,
     thumbnailUrl: thumb,
-    chapters: ['Chapter 1'],
+    chapters: production ? [production.unit.title] : ['Chapter 1'],
+    storyProduction: production,
     storyPrompt: String(input.storyPrompt || '').trim(),
-    fullStory: '',
+    fullStory: production?.unit.story || '',
     characters: [],
-    scenes: [],
-    storyboardGenerated: false,
+    scenes: plannedScenes,
+    screenplayGenerated: Boolean(production),
+    storyboardGenerated: Boolean(production),
     previewGenerated: false,
     previewStatus: 'not_ready',
     timelineAdded: false,
@@ -1228,6 +1271,44 @@ export function createCartoonProject(input: {
   all.unshift(created);
   saveProjectsDb(all);
   return created;
+}
+
+export function saveCartoonStoryPlan(projectId: string, plan: CartoonStoryPlan): CartoonFilmProject {
+  const project = getCartoonProject(projectId);
+  if (!project) throw new Error('Cartoon project not found.');
+  if (project.storyProduction) throw new Error('Open the parent story project to change its episode or chapter plan.');
+  return saveSingleProject({
+    ...project,
+    movieTitle: plan.title,
+    storyPrompt: plan.premise || plan.title,
+    fullStory: plan.units.map(unit => unit.number + '. ' + unit.title + '\n' + unit.story).join('\n\n'),
+    chapters: plan.units.map(unit => unit.title),
+    storyPlan: plan,
+  });
+}
+
+export function openCartoonStoryProduction(projectId: string, unitNumber: number): CartoonFilmProject {
+  const parent = getCartoonProject(projectId);
+  const plan = parent?.storyPlan;
+  const unit = plan?.units.find(candidate => candidate.number === unitNumber);
+  if (!parent || !plan || !unit) throw new Error('Story episode or chapter not found.');
+  const existing = loadProjectsDb().find(project =>
+    project.storyProduction?.parentProjectId === projectId &&
+    project.storyProduction.planId === plan.id &&
+    project.storyProduction.unit.number === unitNumber);
+  if (existing) return existing;
+  return createCartoonProject({
+    name: plan.title + ' · ' + unit.number + ' · ' + unit.title,
+    movieTitle: unit.title,
+    storyPrompt: unit.story,
+    language: parent.language,
+    animationStyle: parent.animationStyle,
+    aspectRatio: parent.aspectRatio,
+    projectType: parent.projectType,
+    resolution: parent.resolution,
+    frameRate: parent.frameRate,
+    durationMinutes: 1,
+  }, { parentProjectId: projectId, planId: plan.id, storyTitle: plan.title, format: plan.format, unit });
 }
 
 export function deleteCartoonProject(id: string): CartoonFilmProject[] {
@@ -1417,31 +1498,22 @@ export function addReferenceAssetsToProject(
   const maxBytes = 10 * 1024 * 1024;
 
   for (const item of assets) {
-    const mime = String(item.mimeType || 'image/png').toLowerCase();
-    if (!allowedTypes.has(mime)) continue;
+    let mime = String(item.mimeType || 'image/png').toLowerCase();
 
     let finalUrl = String(item.url || '').trim();
     let finalSize = Number(item.sizeBytes || 0);
 
-    if (item.dataUrl && item.dataUrl.startsWith('data:image/')) {
-      const commaIdx = item.dataUrl.indexOf(',');
-      if (commaIdx > 0) {
-        const b64 = item.dataUrl.slice(commaIdx + 1);
-        const buf = Buffer.from(b64, 'base64');
-        if (buf.length === 0 || buf.length > maxBytes) {
-          continue;
-        }
-        finalSize = buf.length;
-        const ext = mime === 'image/jpeg' ? 'jpg' : mime === 'image/webp' ? 'webp' : 'png';
-        const safeName = `${p.id.replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now().toString(36)}_${Math.random()
-          .toString(36)
-          .slice(2, 7)}.${ext}`;
-        fs.writeFileSync(path.join(ASSETS_DIR, safeName), buf);
-        finalUrl = `/api/cartoon-assets/${safeName}`;
-      }
+    if (item.dataUrl) {
+      const file = decodeLibraryUpload(String(item.name || ''), String(item.mimeType || ''), item.dataUrl);
+      if (!allowedTypes.has(file.mime) || file.bytes.length > maxBytes) throw new Error('Upload a JPG, PNG or WebP image up to 10 MB.');
+      mime = file.mime;
+      finalSize = file.bytes.length;
+      const safeName = 'ref-' + randomUUID() + '.' + file.extension;
+      fs.writeFileSync(path.join(ASSETS_DIR, safeName), file.bytes);
+      finalUrl = '/api/cartoon-assets/' + safeName;
     }
 
-    if (!finalUrl || finalSize > maxBytes) continue;
+    if (!finalUrl || finalSize > maxBytes || !allowedTypes.has(mime)) continue;
 
     currentAssets.push({
       id: `ref-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1455,7 +1527,7 @@ export function addReferenceAssetsToProject(
   }
 
   p.referenceImages = currentAssets;
-  if (currentAssets.length > 0 && p.scenes.length > 0) {
+  if (!p.storyProduction && currentAssets.length > 0 && p.scenes.length > 0) {
     p.scenes = assignUniqueSceneImages(p.scenes, currentAssets.map((asset) => asset.url));
     p.thumbnailUrl = currentAssets[0].url;
   } else if (currentAssets.length > 0 && !p.thumbnailUrl) {
@@ -1507,6 +1579,177 @@ export function parseCartoonChapters(story: string) {
   ) ? chapters : [];
 }
 
+type CartoonSpeech = (text: string, language: string) => Promise<{ audioBuffer: Buffer; mimeType: string } | null>;
+const activePlannedMediaJobs = new Set<string>();
+
+function plannedAssetPath(url: string | undefined, extension: string) {
+  const filename = url?.match(/^\/api\/cartoon-assets\/([a-z0-9_-]+\.[a-z0-9]+)$/i)?.[1];
+  if (!filename || path.extname(filename) !== extension) return undefined;
+  const file = path.join(ASSETS_DIR, filename);
+  return fs.statSync(file, { throwIfNoEntry: false })?.isFile() ? file : undefined;
+}
+
+async function normalizeDialogueAudio(source: Buffer, mime: string, output: string) {
+  const temp = output + '.input';
+  try {
+    fs.writeFileSync(temp, source);
+    const raw = /audio\/(?:l16|pcm)/i.test(mime);
+    const rate = mime.match(/rate=(\d+)/i)?.[1] || '24000';
+    await execFileAsync('ffmpeg', [
+      '-v', 'error', '-nostdin', '-y', ...(raw ? ['-f', 's16le', '-ar', rate, '-ac', '1'] : []),
+      '-protocol_whitelist', 'file', '-i', temp, '-t', '60', '-ac', '1', '-ar', '48000', '-c:a', 'pcm_s16le', output,
+    ], { timeout: 30_000 });
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
+}
+
+export async function uploadCartoonSceneAudio(
+  projectId: string, sceneNumber: number, input: Record<string, unknown>, track: 'dialogue' | 'soundtrack',
+) {
+  const project = getCartoonProject(projectId);
+  const scene = project?.scenes.find(item => item.sceneNumber === sceneNumber);
+  if (!project?.storyProduction || !scene) throw new Error('Episode or chapter scene was not found.');
+  if (activePlannedMediaJobs.has(projectId) || activeCartoonRenders.has(projectId)) {
+    throw new Error('Wait for the current production media job to finish.');
+  }
+  const file = decodeLibraryUpload(String(input.name || ''), String(input.mimeType || ''), String(input.dataUrl || ''));
+  if (!file.mime.startsWith('audio/') || file.bytes.length > 10 * 1024 * 1024) {
+    throw new Error('Upload MP3, WAV, M4A or OGG up to 10 MB.');
+  }
+  ensureDirs();
+  const filename = 'scene-' + track + '-' + randomUUID() + '.wav';
+  const output = path.join(ASSETS_DIR, filename);
+  activePlannedMediaJobs.add(projectId);
+  try {
+    await normalizeDialogueAudio(file.bytes, file.mime, output);
+    const latest = getCartoonProject(projectId);
+    if (!latest) throw new Error('Episode or chapter production was removed.');
+    const url = '/api/cartoon-assets/' + filename;
+    const patch: Partial<CartoonSceneItem> = track === 'dialogue'
+      ? { dialogueAudioUrl: url, dialogueAudioStatus: 'ready', lastError: undefined }
+      : { soundtrackUrl: url, musicSfxStatus: 'ready' };
+    return saveSingleProject(resetPlannedPreview({
+      ...latest,
+      scenes: latest.scenes.map(item => item.id === scene.id ? { ...item, ...patch } : item),
+    }));
+  } catch (error) {
+    fs.rmSync(output, { force: true });
+    if (error instanceof Error && error.message.startsWith('Command failed:')) {
+      throw new Error('Could not decode the uploaded audio file.');
+    }
+    throw error;
+  } finally {
+    activePlannedMediaJobs.delete(projectId);
+  }
+}
+
+function resetPlannedPreview(project: CartoonFilmProject): CartoonFilmProject {
+  return {
+    ...project,
+    previewGenerated: false,
+    previewStatus: 'not_ready',
+    timelineAdded: false,
+    editingCompleted: false,
+    watchedFinalPreview: false,
+    finalApprovalConfirmed: false,
+    renderJob: { status: 'locked', progress: 0, verified: false },
+  };
+}
+
+export async function preparePlannedCartoonMedia(
+  projectId: string,
+  step: 6 | 7 | 8,
+  synthesizeDialogue: CartoonSpeech,
+  options?: { sceneNumber?: number; restartFailedOnly?: boolean },
+): Promise<CartoonFilmProject> {
+  const project = getCartoonProject(projectId);
+  if (!project?.storyProduction) throw new Error('Open a planned episode or chapter production first.');
+  if (activePlannedMediaJobs.has(projectId) || activeCartoonRenders.has(projectId)) {
+    throw new Error('Production media is already processing for this project.');
+  }
+  ensureDirs();
+  activePlannedMediaJobs.add(projectId);
+  try {
+    const scenes = [...project.scenes].sort((a, b) => a.orderIndex - b.orderIndex);
+    const patches = new Map<string, Partial<CartoonSceneItem>>();
+    for (const [index, scene] of scenes.entries()) {
+      if (!scene.production || (options?.sceneNumber && options.sceneNumber !== scene.sceneNumber)) continue;
+      if (options?.restartFailedOnly && (
+        step === 6 ? scene.imageStatus === 'ready'
+        : step === 7 ? scene.videoClipStatus === 'ready'
+        : scene.dialogueAudioStatus === 'ready'
+      )) continue;
+      const filename = 'scene-' + randomUUID() + (step === 6 ? '.png' : step === 7 ? '.mp4' : '.wav');
+      const output = path.join(ASSETS_DIR, filename);
+      const url = '/api/cartoon-assets/' + filename;
+      try {
+        if (step === 6) {
+          const reference = project.referenceImages?.[index]?.url;
+          let original = reference && findSceneImage(reference) ? reference : scene.originalImageUrl;
+          let provider = original === reference && reference ? 'Uploaded reference' : scene.imageProvider;
+          if ((!original || !findSceneImage(original)) &&
+              (process.env.OPENAI_API_KEY || process.env.STABILITY_API_KEY || process.env.BFL_API_KEY)) {
+            const [generated] = await generateStudioImages({
+              prompt: scene.production.imagePrompt, style: project.animationStyle, aspectRatio: project.aspectRatio,
+              resolution: '768px', count: 1, projectId, projectName: project.name, titlePrefix: scene.title,
+            });
+            original = generated?.url;
+            provider = generated?.provider;
+            if (provider?.includes('Built-in')) original = undefined;
+          }
+          if (!original || !findSceneImage(original)) {
+            original = [CARTOON_IMAGE_POOL[7], CARTOON_IMAGE_POOL[1], CARTOON_IMAGE_POOL[0]][index];
+            provider = 'Studio template preview';
+          }
+          const image = original && findSceneImage(original);
+          if (!original || !image) throw new Error('The source image was unavailable.');
+          await cartoonizeSceneImage(image.filePath, output);
+          patches.set(scene.id, {
+            originalImageUrl: original, imageProvider: provider, storyImageUrl: url, imageStatus: 'ready',
+            videoClipStatus: 'pending', videoClipUrl: undefined, vfxStatus: 'pending', syncStatus: 'pending',
+            lastError: undefined,
+          });
+        } else if (step === 7) {
+          const image = findSceneImage(scene.storyImageUrl);
+          if (!image || scene.imageStatus !== 'ready') throw new Error('Generate or upload this scene image first.');
+          await encodePlannedCartoonScene({
+            image: image.filePath, output, duration: scene.durationSec,
+            aspect: project.aspectRatio, effect: scene.production.effect,
+          });
+          patches.set(scene.id, { videoClipUrl: url, videoClipStatus: 'ready', vfxStatus: 'ready', lastError: undefined });
+        } else {
+          const text = scene.dialogueText.trim();
+          const currentAudio = plannedAssetPath(scene.dialogueAudioUrl, '.wav');
+          if (currentAudio && scene.dialogueAudioStatus === 'ready') continue;
+          if (!text) throw new Error('Add dialogue before generating audio.');
+          const speech = await synthesizeDialogue(text, project.language);
+          if (!speech?.audioBuffer.length) throw new Error('The studio voice provider did not return speech.');
+          await normalizeDialogueAudio(speech.audioBuffer, speech.mimeType, output);
+          patches.set(scene.id, { dialogueAudioUrl: url, dialogueAudioStatus: 'ready', lastError: undefined });
+        }
+      } catch (error) {
+        fs.rmSync(output, { force: true });
+        const detail = error instanceof Error && !error.message.startsWith('Command failed:')
+          ? error.message : 'FFmpeg could not process this scene.';
+        const lastError = 'Scene ' + scene.sceneNumber + ': ' + detail;
+        patches.set(scene.id, step === 6 ? { imageStatus: 'failed', lastError }
+          : step === 7 ? { videoClipStatus: 'failed', lastError }
+          : { dialogueAudioStatus: 'missing', lastError });
+      }
+    }
+    const latest = getCartoonProject(projectId);
+    if (!latest) throw new Error('The project was removed before media finished processing.');
+    if (!patches.size) return latest;
+    return saveSingleProject(resetPlannedPreview({
+      ...latest,
+      scenes: latest.scenes.map(scene => ({ ...scene, ...patches.get(scene.id) })),
+    }));
+  } finally {
+    activePlannedMediaJobs.delete(projectId);
+  }
+}
+
 export function runCartoonWorkflowStep(
   projectId: string,
   stepNumber: number,
@@ -1523,14 +1766,17 @@ export function runCartoonWorkflowStep(
 
   let p: CartoonFilmProject = JSON.parse(JSON.stringify(existing));
 
-  if (options?.storyPrompt !== undefined) {
+  if (!p.storyProduction && options?.storyPrompt !== undefined) {
     p.storyPrompt = String(options.storyPrompt).trim();
   }
 
   const targetStep = Number(stepNumber);
+  if (p.storyProduction && [6, 7, 8].includes(targetStep)) {
+    throw new Error('Run the production media step to create this asset.');
+  }
   const baseSeed = p.characters?.[0]?.consistencySeed || Math.floor(100000 + Math.random() * 899999);
 
-  if (targetStep === 3 || (!p.fullStory && targetStep > 3)) {
+  if (!p.storyProduction && (targetStep === 3 || (!p.fullStory && targetStep > 3))) {
     p.fullStory =
       options?.fullStory?.trim() ||
       `Act I — Setup: Guided by "${p.storyPrompt || p.name}", our hero sets out through a colorful animated world.\n` +
@@ -1566,7 +1812,7 @@ export function runCartoonWorkflowStep(
   const chapters = parseCartoonChapters(p.storyPrompt || '');
   const refUrls = (p.referenceImages || []).map((a) => a.url).filter(Boolean);
 
-  if (targetStep === 5 || (!p.storyboardGenerated && targetStep > 5)) {
+  if (!p.storyProduction && (targetStep === 5 || (!p.storyboardGenerated && targetStep > 5))) {
     const count = chapters.length || Math.max(3, Math.min(25, Number(options?.sceneCount || p.scenes.length || refUrls.length || 4)));
     if (chapters.length) p.chapters = chapters.map((chapter) => chapter.title);
     if (p.scenes.length === 0 || (chapters.length > 0 && p.scenes.length < chapters.length)) {
@@ -1650,7 +1896,7 @@ export function runCartoonWorkflowStep(
   } else if (targetStep === 10) {
     p.scenes = p.scenes.map((sc) => ({
       ...sc,
-      vfxStatus: 'ready',
+      vfxStatus: !p.storyProduction || sc.videoClipStatus === 'ready' ? 'ready' : 'pending',
     }));
   } else if (targetStep === 11) {
     p.scenes = p.scenes.map((sc) =>
@@ -1665,6 +1911,10 @@ export function runCartoonWorkflowStep(
     );
   } else if (targetStep === 12) {
     requireUniqueSceneImages(p.scenes);
+    if (p.storyProduction && p.scenes.some(scene =>
+      !plannedAssetPath(scene.videoClipUrl, '.mp4') || !plannedAssetPath(scene.dialogueAudioUrl, '.wav'))) {
+      throw new Error('Generate the missing scene clips (Step 7) and dialogue audio (Step 8) before preview.');
+    }
     p.previewGenerated = true;
     // IMPORTANT: Preview is NEVER final confirmation!
     p.previewStatus = 'preview_ready_editing_required';
@@ -1689,6 +1939,7 @@ export function updateCartoonScene(
   sceneNumber: number,
   patch: Partial<Pick<CartoonSceneItem, 'title' | 'description' | 'framing' | 'dialogueText' | 'vfxPreset' | 'musicSfxPreset' | 'subtitleText' | 'durationSec'>> & {
     regenerate?: boolean;
+    cartoonEffect?: CartoonStoryScene['effect'];
     moveDirection?: 'up' | 'down';
   }
 ): CartoonFilmProject {
@@ -1712,10 +1963,22 @@ export function updateCartoonScene(
     if (patch.title !== undefined) sc.title = patch.title;
     if (patch.description !== undefined) sc.description = patch.description;
     if (patch.framing !== undefined) sc.framing = patch.framing;
+    if (patch.cartoonEffect !== undefined && sc.production && Object.hasOwn(STORY_EFFECTS, patch.cartoonEffect)) {
+      sc.production.effect = patch.cartoonEffect;
+      sc.videoClipUrl = undefined;
+      sc.videoClipStatus = 'pending';
+      sc.vfxStatus = 'pending';
+    }
     if (patch.dialogueText !== undefined) {
+      const previousDialogue = sc.dialogueText;
       sc.dialogueText = patch.dialogueText;
       sc.subtitleText = patch.subtitleText ?? patch.dialogueText;
-      sc.dialogueAudioStatus = sc.dialogueText.trim() ? 'ready' : 'missing';
+      if (sc.production && previousDialogue !== sc.dialogueText) {
+        sc.dialogueAudioUrl = undefined;
+        sc.dialogueAudioStatus = sc.dialogueText.trim() ? 'pending' : 'missing';
+      } else if (!sc.production) {
+        sc.dialogueAudioStatus = sc.dialogueText.trim() ? 'ready' : 'missing';
+      }
       sc.subtitleStatus = sc.subtitleText.trim() ? 'ready' : 'missing';
     }
     if (patch.subtitleText !== undefined) {
@@ -1731,9 +1994,14 @@ export function updateCartoonScene(
       sc.musicSfxStatus = 'ready';
     }
     if (patch.durationSec !== undefined) {
-      sc.durationSec = Math.max(2, Math.min(30, Number(patch.durationSec) || 4));
+      const duration = Math.max(2, Math.min(30, Number(patch.durationSec) || 4));
+      if (sc.production && sc.durationSec !== duration) {
+        sc.videoClipStatus = 'pending';
+        sc.videoClipUrl = undefined;
+      }
+      sc.durationSec = duration;
     }
-    if (patch.regenerate) {
+    if (patch.regenerate && !sc.production) {
       sc.imageStatus = 'ready';
       sc.videoClipStatus = 'ready';
       sc.dialogueAudioStatus = 'ready';
@@ -1753,7 +2021,7 @@ export function updateCartoonScene(
     orderIndex: i + 1,
   }));
 
-  return saveSingleProject(p);
+  return saveSingleProject(p.storyProduction ? resetPlannedPreview(p) : p);
 }
 
 /**
@@ -1914,7 +2182,7 @@ export async function renderAndVerifyCartoonMp4(
   ensureDirs();
   const safeBase = existing.id.replace(/[^a-zA-Z0-9_-]/g, '_');
   const outMp4Path = path.join(RENDER_DIR, `${safeBase}.mp4`);
-  if (activeCartoonRenders.has(projectId)) throw new Error('This film is already rendering.');
+  if (activeCartoonRenders.has(projectId) || activePlannedMediaJobs.has(projectId)) throw new Error('This film is already processing media.');
   const tempDir = fs.mkdtempSync(path.join(RENDER_DIR, 'cartoon-render-'));
   const concatListPath = path.join(tempDir, 'images.txt');
   const audioPath = path.join(tempDir, 'dialogue.pcm');
@@ -1924,23 +2192,29 @@ export async function renderAndVerifyCartoonMp4(
     const scenes = [...existing.scenes].sort((a, b) => a.orderIndex - b.orderIndex);
     const sampleRate = 48000;
     const sceneFiles: { filePath: string; durationSec: number }[] = [];
+    const captions: string[] = [];
+    let elapsed = 0;
+    const srtTime = (seconds: number) => new Date(Math.round(seconds * 1000)).toISOString().slice(11, 23).replace('.', ',');
     fs.writeFileSync(audioPath, Buffer.alloc(0));
     const imagePaths = requireUniqueSceneImages(scenes);
     for (const [index, sc] of scenes.entries()) {
       const dialogue = sc.dialogueText?.trim();
       let pcm = Buffer.alloc(0);
       if (dialogue) {
-        const speech = await synthesizeDialogue(dialogue, existing.language);
-        if (!speech?.audioBuffer.length) {
-          throw new Error(`Scene ${sc.sceneNumber}: dialogue audio could not be generated. Check the studio voice provider and retry.`);
-        }
-        const voicePath = path.join(tempDir, 'voice');
+        const cachedVoice = plannedAssetPath(sc.dialogueAudioUrl, '.wav');
+        if (existing.storyProduction && !cachedVoice) throw new Error(`Scene ${sc.sceneNumber}: run Step 8 to generate dialogue audio.`);
+        const voicePath = cachedVoice || path.join(tempDir, 'voice');
         const pcmPath = path.join(tempDir, 'voice.pcm');
-        fs.writeFileSync(voicePath, speech.audioBuffer);
-        const pcmRate = speech.mimeType.match(/rate=(\d+)/i)?.[1] || '24000';
-        const inputOptions = /audio\/(?:l16|pcm)/i.test(speech.mimeType)
-          ? ['-f', 's16le', '-ar', pcmRate, '-ac', '1']
-          : [];
+        let inputOptions: string[] = [];
+        if (!cachedVoice) {
+          const speech = await synthesizeDialogue(dialogue, existing.language);
+          if (!speech?.audioBuffer.length) {
+            throw new Error(`Scene ${sc.sceneNumber}: dialogue audio could not be generated. Check the studio voice provider and retry.`);
+          }
+          fs.writeFileSync(voicePath, speech.audioBuffer);
+          const pcmRate = speech.mimeType.match(/rate=(\d+)/i)?.[1] || '24000';
+          if (/audio\/(?:l16|pcm)/i.test(speech.mimeType)) inputOptions = ['-f', 's16le', '-ar', pcmRate, '-ac', '1'];
+        }
         await execFileAsync('ffmpeg', [
           '-v', 'error', '-y', ...inputOptions, '-i', voicePath,
           '-vn', '-ac', '1', '-ar', String(sampleRate), '-f', 's16le', pcmPath,
@@ -1950,21 +2224,48 @@ export async function renderAndVerifyCartoonMp4(
       }
       const sceneDuration = Math.max(2, Math.min(180, Number(sc.durationSec) || 3));
       const durationSec = Math.ceil(Math.max(sceneDuration, pcm.length / (sampleRate * 2)) * 25) / 25;
+      const expectedBytes = Math.round(durationSec * sampleRate) * 2;
+      const soundtrack = plannedAssetPath(sc.soundtrackUrl, '.wav');
+      if (soundtrack) {
+        const voicePcm = path.join(tempDir, 'voice-for-mix.pcm');
+        const mixedPcm = path.join(tempDir, 'mixed.pcm');
+        fs.writeFileSync(voicePcm, pcm);
+        fs.appendFileSync(voicePcm, Buffer.alloc(expectedBytes - pcm.length));
+        await execFileAsync('ffmpeg', [
+          '-v', 'error', '-nostdin', '-y', '-f', 's16le', '-ar', String(sampleRate), '-ac', '1', '-i', voicePcm,
+          '-stream_loop', '-1', '-protocol_whitelist', 'file', '-i', soundtrack,
+          '-filter_complex', '[1:a]volume=0.22[fx];[0:a][fx]amix=inputs=2:duration=first:normalize=0',
+          '-t', String(durationSec), '-f', 's16le', mixedPcm,
+        ], { timeout: 30_000 });
+        pcm = fs.readFileSync(mixedPcm).subarray(0, expectedBytes);
+      }
       fs.appendFileSync(audioPath, pcm);
-      fs.appendFileSync(audioPath, Buffer.alloc(Math.round(durationSec * sampleRate) * 2 - pcm.length));
-      sceneFiles.push({
-        filePath: imagePaths[index],
-        durationSec,
-      });
+      fs.appendFileSync(audioPath, Buffer.alloc(expectedBytes - pcm.length));
+      let visualPath = imagePaths[index];
+      if (existing.storyProduction && sc.production) {
+        visualPath = path.join(tempDir, 'shot-' + index + '.mp4');
+        await encodePlannedCartoonScene({
+          image: imagePaths[index], output: visualPath, duration: durationSec,
+          aspect: existing.aspectRatio, effect: sc.production.effect,
+        });
+      }
+      sceneFiles.push({ filePath: visualPath, durationSec });
+      if (existing.storyProduction && sc.subtitleText.trim()) {
+        captions.push((captions.length + 1) + '\n' + srtTime(elapsed) + ' --> ' + srtTime(elapsed + durationSec) + '\n' +
+          sc.subtitleText.trim().replace(/\r?\n\s*\r?\n/g, '\n'));
+      }
+      elapsed += durationSec;
     }
 
     if (sceneFiles.length === 0) throw new Error('Add scenes before rendering the film.');
 
-    const concatBody =
-      sceneFiles
-        .map((item) => `file '${item.filePath.replace(/'/g, "'\\''")}'\nduration ${item.durationSec}`)
-        .join('\n') +
-      `\nfile '${sceneFiles[sceneFiles.length - 1].filePath.replace(/'/g, "'\\''")}'\n`;
+    const concatEntries = sceneFiles.map((item) => {
+      const filename = item.filePath.replace(/'/g, "'\\''");
+      return `file '${filename}'\nduration ${item.durationSec}`;
+    }).join('\n');
+    const lastImage = sceneFiles[sceneFiles.length - 1].filePath.replace(/'/g, "'\\''");
+    const concatBody = existing.storyProduction ? concatEntries + '\n'
+      : concatEntries + `\nfile '${lastImage}'\n`;
 
     fs.writeFileSync(concatListPath, concatBody, 'utf8');
 
@@ -1974,31 +2275,19 @@ export async function renderAndVerifyCartoonMp4(
         ? 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p'
         : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p';
 
+    const subtitlePath = path.join(tempDir, 'captions.srt');
+    if (captions.length) fs.writeFileSync(subtitlePath, captions.join('\n\n') + '\n', 'utf8');
+    const subtitleInput = captions.length ? ['-f', 'srt', '-i', subtitlePath] : [];
+    const subtitleMapping = captions.length ? ['-map', '2:s:0', '-c:s', 'mov_text'] : [];
+    const videoOptions = existing.storyProduction
+      ? ['-c:v', 'copy']
+      : ['-vf', `${scaleFilter},fps=24,tpad=stop_mode=clone:stop_duration=1`, '-c:v', 'libx264', '-preset', 'ultrafast'];
     await execFileAsync('ffmpeg', [
-      '-v', 'error',
-      '-y',
-      '-f',
-      'concat',
-      '-safe',
-      '0',
-      '-i',
-      concatListPath,
-      '-f', 's16le', '-ar', String(sampleRate), '-ac', '1',
-      '-i', audioPath,
-      '-map', '0:v:0', '-map', '1:a:0',
-      '-t', String(totalSec),
-      '-vf',
-      `${scaleFilter},fps=24,tpad=stop_mode=clone:stop_duration=1`,
-      '-c:v',
-      'libx264',
-      '-preset',
-      'ultrafast',
-      '-c:a',
-      'aac',
-      '-movflags',
-      '+faststart',
-      tempMp4Path,
-    ]);
+      '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', concatListPath,
+      '-f', 's16le', '-ar', String(sampleRate), '-ac', '1', '-i', audioPath, ...subtitleInput,
+      '-map', '0:v:0', '-map', '1:a:0', ...subtitleMapping, '-t', String(totalSec),
+      ...videoOptions, '-c:a', 'aac', '-movflags', '+faststart', tempMp4Path,
+    ], { timeout: 75_000 });
 
     // Verify rendered file via fs.statSync + ffprobe
     if (!fs.existsSync(tempMp4Path)) {
@@ -2029,7 +2318,7 @@ export async function renderAndVerifyCartoonMp4(
         status: 'completed',
         progress: 100,
         verified: true,
-        fileName: `${existing.name.replace(/[^a-zA-Z0-9_-]+/g, '_')}.mp4`,
+        fileName: (existing.movieTitle || existing.name).replace(/[^\p{L}\p{M}\p{N}_-]+/gu, '_') + '.mp4',
         fileSizeBytes: stats.size,
         durationSec: Math.round(verifiedDuration * 10) / 10,
         renderedAt: new Date().toISOString(),
