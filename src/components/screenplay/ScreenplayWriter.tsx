@@ -15,15 +15,18 @@ import {
 import { ScreenplayElement, FilmProject } from '../../types';
 import { INITIAL_SCREENPLAY } from '../../data/initialData';
 import { soundFx } from '../../utils/audioSynth';
+import { useAuth } from '../../context/AuthContext';
 
 interface ScreenplayWriterProps {
   activeFilm: FilmProject;
 }
 
 export const ScreenplayWriter: React.FC<ScreenplayWriterProps> = ({ activeFilm }) => {
+  const { firebaseUser } = useAuth();
   const [elements, setElements] = useState<ScreenplayElement[]>(INITIAL_SCREENPLAY);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
   const [aiPrompt, setAiPrompt] = useState('Commander Valerie Chen confronts an ancient AI guardian awakened inside the monolith');
   const [copied, setCopied] = useState(false);
 
@@ -56,14 +59,18 @@ export const ScreenplayWriter: React.FC<ScreenplayWriterProps> = ({ activeFilm }
     if (selectedId === id) setSelectedId(null);
   };
 
-  // Real Gemini AI Generation Call
   const handleGenerateAiScene = async () => {
     setIsAiLoading(true);
+    setAiError('');
     soundFx.playScannerBeep();
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (firebaseUser?.emailVerified) {
+        headers.Authorization = `Bearer ${await firebaseUser.getIdToken()}`;
+      }
       const res = await fetch('/api/ai/screenplay', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           title: activeFilm.title,
           genre: activeFilm.genre,
@@ -73,39 +80,40 @@ export const ScreenplayWriter: React.FC<ScreenplayWriterProps> = ({ activeFilm }
       });
 
       const data = await res.json();
-      if (data.screenplay) {
-        // Parse into screenplay elements
-        const lines = data.screenplay.split('\n').filter((l: string) => l.trim().length > 0);
-        const parsedElements: ScreenplayElement[] = lines.map((line: string, index: number) => {
-          const trimmed = line.trim();
-          let type: ScreenplayElement['type'] = 'action';
+      if (!res.ok || !data.screenplay) {
+        throw new Error(data.error || 'Screenplay generation did not return a scene.');
+      }
+      // Parse into screenplay elements
+      const lines = data.screenplay.split('\n').filter((l: string) => l.trim().length > 0);
+      const parsedElements: ScreenplayElement[] = lines.map((line: string, index: number) => {
+        const trimmed = line.trim();
+        let type: ScreenplayElement['type'] = 'action';
 
-          if (/^(INT\.|EXT\.|INT\/EXT\.|I\/E\.)/i.test(trimmed)) {
-            type = 'scene_heading';
-          } else if (/^[A-Z0-9\s\.\(\)]+$/.test(trimmed) && trimmed.length < 32 && !trimmed.endsWith('.')) {
-            type = 'character';
-          } else if (trimmed.startsWith('(') && trimmed.endsWith(')')) {
-            type = 'parenthetical';
-          } else if (/^(FADE IN:|FADE OUT\.|CUT TO:|SMASH CUT TO:|DISSOLVE TO:)/i.test(trimmed)) {
-            type = 'transition';
-          } else if (index > 0 && lines[index - 1].trim().length < 30) {
-            type = 'dialogue';
-          }
-
-          return {
-            id: `ai-${Date.now()}-${index}`,
-            type,
-            text: trimmed,
-          };
-        });
-
-        if (parsedElements.length > 0) {
-          setElements(parsedElements);
-          soundFx.playCinematicImpact();
+        if (/^(INT\.|EXT\.|INT\/EXT\.|I\/E\.)/i.test(trimmed)) {
+          type = 'scene_heading';
+        } else if (/^[A-Z0-9\s\.\(\)]+$/.test(trimmed) && trimmed.length < 32 && !trimmed.endsWith('.')) {
+          type = 'character';
+        } else if (trimmed.startsWith('(') && trimmed.endsWith(')')) {
+          type = 'parenthetical';
+        } else if (/^(FADE IN:|FADE OUT\.|CUT TO:|SMASH CUT TO:|DISSOLVE TO:)/i.test(trimmed)) {
+          type = 'transition';
+        } else if (index > 0 && lines[index - 1].trim().length < 30) {
+          type = 'dialogue';
         }
+
+        return {
+          id: `ai-${Date.now()}-${index}`,
+          type,
+          text: trimmed,
+        };
+      });
+
+      if (parsedElements.length > 0) {
+        setElements(parsedElements);
+        soundFx.playCinematicImpact();
       }
     } catch (e) {
-      console.error('AI Screenplay Error:', e);
+      setAiError(e instanceof Error ? e.message : 'Screenplay generation failed.');
     } finally {
       setIsAiLoading(false);
     }
@@ -372,6 +380,7 @@ export const ScreenplayWriter: React.FC<ScreenplayWriterProps> = ({ activeFilm }
           )}
           <span>{isAiLoading ? 'Writing Scene...' : 'Generate Hollywood Scene'}</span>
         </button>
+        {aiError && <p role="alert" className="text-xs text-red-300">{aiError}</p>}
 
         {/* Script Doctor Tips */}
         <div className="border-t border-slate-800 pt-4 space-y-3 text-xs">

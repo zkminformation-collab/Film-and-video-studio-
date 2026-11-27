@@ -7,6 +7,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { generateFreeScreenplay, ScreenplayProviderError } from './server/openRouterScreenplay.ts';
 import { builtinProductionAssets } from './src/data/builtinProductionAssets';
 import { productionAssetVariant, variantsPerAsset } from './src/data/productionAssetVariants';
 import { renderProductionVariant } from './server/productionAssetVariants';
@@ -266,7 +267,10 @@ app.get('/api/health', (_req, res) => {
 // AI Screenplay Generator / Polish Endpoint
 app.post('/api/ai/screenplay', async (req, res) => {
   const { title, genre, logline, scenePrompt, characters, tone } = req.body;
-  if (!ai) {
+  const openRouterKey = process.env.OPENROUTER_API_KEY?.trim();
+  const authorization = req.get('authorization');
+  const openRouter = openRouterKey && authorization ? { key: openRouterKey, authorization } : null;
+  if (!ai && !openRouter) {
     // Provide realistic industry-standard fallback screenplay if no API key
     return res.json({
       success: true,
@@ -313,16 +317,27 @@ Characters: "${characters || 'Protagonist and Key Antagonist/Companion'}"
 
 Return clean screenplay text ready for standard Courier formatting.`;
 
-    const response = await ai.models.generateContent({
+    if (openRouter) {
+      const screenplay = await generateFreeScreenplay(prompt, openRouter.key, openRouter.authorization);
+      return res.json({ success: true, screenplay });
+    }
+
+    const response = await ai?.models.generateContent({
       model: 'gemini-4-hydrogen',
       contents: prompt,
     });
 
     res.json({
       success: true,
-      screenplay: response.text || '',
+      screenplay: response?.text || '',
     });
   } catch (error: any) {
+    if (error instanceof ScreenplayProviderError) {
+      return res.status(error.status).json({ error: error.message });
+    }
+    if (openRouter) {
+      return res.status(502).json({ error: 'The free screenplay service is temporarily unavailable.' });
+    }
     console.error('Error generating screenplay:', error);
     res.status(500).json({ error: error.message || 'Failed to generate screenplay' });
   }
@@ -2118,6 +2133,7 @@ Respond in JSON with:
 // 8. Provider Configuration Status Endpoint
 app.get('/api/providers/status', (_req, res) => {
   const hasGeminiKey = !!process.env.GEMINI_API_KEY;
+  const hasOpenRouterKey = Boolean(process.env.OPENROUTER_API_KEY?.trim());
   res.json({
     status: 'operational',
     serverUptime: process.uptime(),
@@ -2131,6 +2147,17 @@ app.get('/api/providers/status', (_req, res) => {
         models: ['gemini-4-hydrogen', 'gemini-4-argon', 'gemini-3.1-flash-lite'],
         status: hasGeminiKey ? 'Active & Connected' : 'Requires GEMINI_API_KEY',
         latency: '340ms',
+        type: 'Live AI'
+      },
+      {
+        id: 'openrouter',
+        name: 'OpenRouter Free Screenplay',
+        category: 'Screenplay AI',
+        configured: hasOpenRouterKey,
+        keySource: hasOpenRouterKey ? 'Environment Secret (Secure Backend)' : 'Missing Server Key',
+        models: ['openrouter/free'],
+        status: hasOpenRouterKey ? 'Configured for verified Studio users' : 'Requires OPENROUTER_API_KEY',
+        latency: 'Varies',
         type: 'Live AI'
       },
       {
