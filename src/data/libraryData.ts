@@ -39,6 +39,7 @@ export interface UniversalAsset {
   format: string;
   resolution?: string;
   duration?: string;
+  durationSeconds?: number;
   size: string;
   thumbnail: string;
   mediaUrl?: string;

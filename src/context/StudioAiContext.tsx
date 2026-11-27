@@ -384,11 +384,11 @@ export const StudioAiProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
 
     const newClip: TimelineClip = {
-      id: `clip-lib-${Date.now()}`,
+      id: `clip-lib-${crypto.randomUUID()}`,
       trackId,
       name: asset.name,
       start: 0,
-      duration: 6,
+      duration: asset.durationSeconds && Number.isFinite(asset.durationSeconds) ? asset.durationSeconds : 6,
       color,
       type,
       speed: 1.0,

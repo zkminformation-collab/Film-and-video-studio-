@@ -134,6 +134,7 @@ export async function renderLibraryVideo(input: Record<string, unknown>) {
         format: 'MP4',
         mimeType: 'video/mp4',
         sizeBytes,
+        durationSeconds: duration,
         url: '/api/library-uploads/' + filename,
         thumbnail: images[0].asset.url,
         description: images.length + ' images · ' + duration + ' seconds · ' + LIBRARY_VIDEO_EFFECTS[effect as keyof typeof LIBRARY_VIDEO_EFFECTS],

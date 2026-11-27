@@ -66,6 +66,7 @@ function fromLibraryRecord(item: LibraryUploadedAsset): UniversalAsset {
     subcategory: item.subcategory || 'Uploaded Studio Asset',
     source: item.source,
     format: item.format || 'FILE',
+    durationSeconds: item.durationSeconds,
     size: item.size || '1.0 MB',
     thumbnail: item.thumbnail || '/assets/images/cartoon_adventure_thumb_1794924309261.jpg',
     mediaUrl: item.url,

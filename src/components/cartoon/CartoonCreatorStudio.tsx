@@ -904,6 +904,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
           mediaUrl: sc.videoClipUrl,
           resolution: project.aspectRatio === '9:16' ? '720x1280' : '1280x720',
           duration: '00:' + String(sc.durationSec).padStart(2, '0'),
+          durationSeconds: sc.durationSec,
           size: '4.2 MB',
           thumbnail: sc.storyImageUrl,
           description: sc.description,

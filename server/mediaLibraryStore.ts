@@ -18,6 +18,7 @@ export interface LibraryUploadedAsset {
   source: 'upload' | 'ai_generated' | 'rendered';
   format: string;
   mimeType: string;
+  durationSeconds?: number;
   sizeBytes: number;
   size: string;
   url: string;
@@ -224,6 +225,7 @@ export function registerExistingLibraryAsset(input: {
   format: string;
   mimeType: string;
   sizeBytes?: number;
+  durationSeconds?: number;
   url: string;
   thumbnail?: string;
   description?: string;
@@ -254,6 +256,7 @@ export function registerExistingLibraryAsset(input: {
     source: input.source || 'ai_generated',
     format: String(input.format || 'MP4').toUpperCase(),
     mimeType: String(input.mimeType || 'video/mp4'),
+    durationSeconds: input.durationSeconds,
     sizeBytes,
     size: sizeBytes > 0 ? formatBytes(sizeBytes) : '1.0 MB',
     url: input.url,
@@ -305,6 +308,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
     vfxStatus: string;
     subtitleText: string;
     subtitleStatus: string;
+    durationSec?: number;
   }>;
   renderJob?: {
     verified?: boolean;
@@ -379,6 +383,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
           name: 'Scene ' + scene.sceneNumber + ' · ' + scene.title + ' · ' + file.label,
           category: file.category, subcategory: file.label, source: 'rendered', format: file.format,
           mimeType: file.mimeType, sizeBytes, url: file.url, thumbnail: thumb,
+          durationSeconds: file.category === 'video' ? scene.durationSec : undefined,
           description: scene.description, tags: ['Cartoon Creator', file.label, styleTag], projectId, projectName,
         });
         count++;
