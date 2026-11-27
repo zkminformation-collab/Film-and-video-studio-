@@ -260,6 +260,9 @@ export const CodeExplorer: React.FC = () => {
             <Download className="w-3.5 h-3.5 text-amber-400" />
             <span>Export Kotlin Source Zip</span>
           </button>
+          <a href="/image-code.html" className="mt-2 w-full flex items-center justify-center gap-1.5 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-200 border border-cyan-500/30 rounded-lg text-xs font-mono font-medium transition-colors">
+            <span>Open Image Code Studio</span>
+          </a>
         </div>
       </div>
 
