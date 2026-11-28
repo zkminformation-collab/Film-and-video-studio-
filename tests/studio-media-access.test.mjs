@@ -11,7 +11,7 @@ const project = {
   ownerUserId: 'alice',
   thumbnailUrl: '/assets/demo.png',
   referenceImages: [{ url: '/api/cartoon-assets/scene-private.png' }],
-  scenes: [{ dialogueAudioUrl: '/api/cartoon-assets/voice-private.wav' }],
+  scenes: [{ dialogueAudioUrl: '/api/cartoon-assets/voice-private.wav', originalVideoUrl: '/api/cartoon-assets/video-source.mp4' }],
 };
 const video = { ownerUserId: 'alice', url: '/api/library-uploads/private-video.mp4' };
 
@@ -19,6 +19,7 @@ test('scene files, project metadata and private renders are restricted to their 
   const access = (viewer) => createStudioMediaAccess(viewer, [project], [video]);
   for (const viewer of [undefined, bob]) {
     assert.equal(access(viewer).allowsUrl('/api/cartoon-assets/scene-private.png'), false);
+    assert.equal(access(viewer).allowsUrl('/api/cartoon-assets/video-source.mp4'), false);
     assert.equal(access(viewer).allowsUrl('/api/cartoon-assets/voice-private.wav'), false);
     assert.equal(access(viewer).allowsUrl(video.url), false);
     assert.equal(access(viewer).allowsRecord({ project_id: project.id }), false);
@@ -26,6 +27,7 @@ test('scene files, project metadata and private renders are restricted to their 
     assert.equal(access(viewer).allowsRecord({ preview_url: video.url }), false);
   }
   assert.equal(access(alice).allowsUrl('/api/cartoon-assets/voice-private.wav'), true);
+  assert.equal(access(alice).allowsUrl('/api/cartoon-assets/video-source.mp4'), true);
   assert.equal(access(alice).allowsRecord(video), true);
   assert.equal(access(alice).isPrivateRecord(video), true);
   assert.equal(access(undefined).allowsUrl('/assets/demo.png'), true);

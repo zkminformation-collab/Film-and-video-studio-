@@ -31,6 +31,7 @@ test('an owned chapter progresses from preview through approval to a verified MP
     addReferenceAssetsToProject, confirmFinalProjectApproval, createCartoonProject,
     getVerifiedRenderMp4Path, openCartoonStoryProduction, preparePlannedCartoonMedia,
     renderAndVerifyCartoonMp4, runCartoonWorkflowStep, saveCartoonStoryPlan, uploadCartoonSceneAudio,
+    uploadCartoonSceneImage, uploadCartoonSceneVideo,
   } = await import('../server/cartoonWorkflowStore.ts');
   const { createCartoonStoryPlan, readCartoonStoryRequest } = await import('../server/cartoonStoryPlan.ts');
 
@@ -39,6 +40,7 @@ test('an owned chapter progresses from preview through approval to a verified MP
     readCartoonStoryRequest({ title: parent.name, premise: parent.storyPrompt, format: 'chapters', count: 1 }),
     { language: 'Kannada', style: '2D Cartoon', aspect: '16:9' },
   );
+  assert.match(plan.units[0].scenes[0].action, /ಹಕ್ಕಿಯ ಹುಡುಕಾಟ/);
   saveCartoonStoryPlan(parent.id, plan);
   const chapter = openCartoonStoryProduction(parent.id, 1);
   assert.equal(chapter.ownerUserId, parent.ownerUserId);
@@ -50,15 +52,40 @@ test('an owned chapter progresses from preview through approval to a verified MP
   const payload = (name, mimeType) => ({
     name, mimeType, dataUrl: 'data:' + mimeType + ';base64,' + fs.readFileSync(name).toString('base64'),
   });
+  const voiceWithCloudDisabled = async () => { throw new Error('Uploaded dialogue is required for this fixture.'); };
+  const providerKeys = ['OPENAI_API_KEY', 'STABILITY_API_KEY', 'BFL_API_KEY'];
+  const savedKeys = providerKeys.map(key => process.env[key]);
+  for (const key of providerKeys) delete process.env[key];
+  try {
+    const incomplete = await preparePlannedCartoonMedia(chapter.id, 6, voiceWithCloudDisabled);
+    for (const scene of incomplete.scenes) {
+      assert.equal(scene.imageStatus, 'failed');
+      assert.equal(scene.storyImageUrl, '');
+      assert.match(scene.lastError, /upload an image/i);
+    }
+  } finally {
+    providerKeys.forEach((key, index) => {
+      if (savedKeys[index] !== undefined) process.env[key] = savedKeys[index];
+    });
+  }
+
   ['red', 'blue', 'green'].forEach((color, index) => {
     const name = 'scene-' + index + '.png';
     ffmpeg('-f', 'lavfi', '-i', 'color=c=' + color + ':s=240x180', '-frames:v', '1', '-threads', '1', name);
     addReferenceAssetsToProject(chapter.id, [payload(name, 'image/png')]);
   });
 
-  const voiceWithCloudDisabled = async () => { throw new Error('Uploaded dialogue is required for this fixture.'); };
+  ffmpeg('-f', 'lavfi', '-i', 'testsrc2=s=240x180:r=24', '-t', '3', '-c:v', 'libx264', '-threads', '1', 'source.mp4');
+  const withVideo = await uploadCartoonSceneVideo(chapter.id, 1, payload('source.mp4', 'video/mp4'));
+  const importedClipUrl = withVideo.scenes[0].videoClipUrl;
+  assert.equal(withVideo.scenes[0].videoClipStatus, 'ready');
+  assert.match(withVideo.scenes[0].originalVideoUrl, /-source\.mp4$/);
+  const withImage = await uploadCartoonSceneImage(chapter.id, 2, payload('scene-1.png', 'image/png'));
+  const uploadedImageUrl = withImage.scenes[1].storyImageUrl;
   const images = await preparePlannedCartoonMedia(chapter.id, 6, voiceWithCloudDisabled);
   for (const scene of images.scenes) assert.equal(scene.imageStatus, 'ready', scene.lastError);
+  assert.equal(images.scenes[0].videoClipUrl, importedClipUrl);
+  assert.equal(images.scenes[1].storyImageUrl, uploadedImageUrl);
   const clips = await preparePlannedCartoonMedia(chapter.id, 7, voiceWithCloudDisabled);
   for (const scene of clips.scenes) assert.equal(scene.videoClipStatus, 'ready', scene.lastError);
   assert.throws(() => runCartoonWorkflowStep(chapter.id, 12), /generate the missing scene clips/i);
@@ -83,4 +110,7 @@ test('an owned chapter progresses from preview through approval to a verified MP
   assert.ok(streams.some(stream => stream.codec_name === 'h264'));
   assert.ok(streams.some(stream => stream.codec_name === 'aac'));
   assert.ok(streams.some(stream => stream.codec_name === 'mov_text'));
+  const frame = time => execFileSync('ffmpeg', ['-v', 'error', '-ss', time, '-i', verified.filePath,
+    '-map', '0:v:0', '-frames:v', '1', '-f', 'framemd5', '-'], { encoding: 'utf8' }).trim().split('\n').at(-1).split(',').at(-1);
+  assert.notEqual(frame('1'), frame('2'), 'the imported scene must retain motion in the final MP4');
 });

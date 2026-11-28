@@ -39,6 +39,13 @@ export type ViewPlatform =
 
 export type StudioTheme = 'elevenlabs' | 'creative' | 'cinematic' | 'premiere';
 
+export interface StoryVideoTimeline {
+  projectId: string;
+  title: string;
+  aspectRatio: '16:9' | '9:16';
+  clips: TimelineClip[];
+}
+
 export interface FilmProject {
   id: string;
   title: string;

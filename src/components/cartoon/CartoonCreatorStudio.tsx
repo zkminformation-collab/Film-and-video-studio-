@@ -26,7 +26,7 @@ import {
   AlertTriangle,
   Link2,
 } from 'lucide-react';
-import { StudioModule, StudioTheme } from '../../types';
+import { StudioModule, StudioTheme, type StoryVideoTimeline } from '../../types';
 import { useStudioAi } from '../../context/StudioAiContext';
 import { useAuth } from '../../context/AuthContext';
 import type { User } from 'firebase/auth';
@@ -182,9 +182,18 @@ interface CartoonFilmProject {
   createdAt: string;
 }
 
+export interface StoryVideoLaunch {
+  premise: string;
+  short: boolean;
+}
+
 interface CartoonCreatorStudioProps {
   theme: StudioTheme;
   onNavigate: (module: StudioModule) => void;
+  filmMaker?: boolean;
+  launch?: StoryVideoLaunch;
+  resumeProjectId?: string;
+  onOpenStoryTimeline: (timeline: StoryVideoTimeline) => void;
 }
 
 const QUALITY_CHECK_RULES = [
@@ -205,7 +214,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = (props)
   if (!firebaseUser?.emailVerified) {
     return (
       <section className="space-y-3 p-6">
-        <h2 className="font-bold">Cartoon Creator</h2>
+        <h2 className="font-bold">{props.filmMaker ? 'AI Film Maker' : 'Cartoon Creator'}</h2>
         <p className="text-sm">Sign in with a verified Studio account to access your projects.</p>
         <button type="button" onClick={() => openAuthModal()} className="rounded-lg bg-amber-500 px-4 py-2 font-semibold text-slate-950">
           Sign in
@@ -220,6 +229,10 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = (props)
 const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User }> = ({
   theme,
   onNavigate,
+  filmMaker,
+  launch,
+  resumeProjectId,
+  onOpenStoryTimeline,
   user,
 }) => {
   const projectFetch = useCallback((url: string, init?: RequestInit) => requestCartoonProject(user, url, init), [user]);
@@ -227,23 +240,25 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
   const isLight = theme === 'elevenlabs';
 
   const [projects, setProjects] = useState<CartoonFilmProject[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [workspaceView, setWorkspaceView] = useState<'dashboard' | 'az23' | 'workflow' | 'quality'>('dashboard');
-  const [activeStepNumber, setActiveStepNumber] = useState<number>(1);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(resumeProjectId || null);
+  const [workspaceView, setWorkspaceView] = useState<'dashboard' | 'az23' | 'workflow' | 'quality'>(resumeProjectId ? 'workflow' : 'dashboard');
+  const [activeStepNumber, setActiveStepNumber] = useState<number>(resumeProjectId ? 14 : 1);
   const [selectedSceneNumber, setSelectedSceneNumber] = useState<number>(1);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   // Create new project inline drawer
-  const [showNewForm, setShowNewForm] = useState<boolean>(false);
+  const [showNewForm, setShowNewForm] = useState(!resumeProjectId && Boolean(filmMaker || launch));
   const [newName, setNewName] = useState<string>('');
-  const [newType, setNewType] = useState<ProjectCategory>('Cartoon Film');
+  const [newPremise, setNewPremise] = useState(launch?.premise || '');
+  const [newLanguage, setNewLanguage] = useState('Kannada');
+  const [newType, setNewType] = useState<ProjectCategory>(launch?.short ? 'Short Cartoon Video' : 'Cartoon Film');
   const [newStyle, setNewStyle] = useState<string>('3D Stylized Cartoon');
-  const [newAspect, setNewAspect] = useState<'16:9' | '9:16'>('16:9');
+  const [newAspect, setNewAspect] = useState<'16:9' | '9:16'>(launch?.short ? '9:16' : '16:9');
 
   // Editable prompt & manual scene editor fields
-  const [promptDraft, setPromptDraft] = useState<string>('');
+  const [storyDraft, setStoryDraft] = useState<{ projectId: string; premise: string }>();
   const [editingSceneNum, setEditingSceneNum] = useState<number | null>(null);
   const [sceneEditTitle, setSceneEditTitle] = useState<string>('');
   const [sceneEditDesc, setSceneEditDesc] = useState<string>('');
@@ -265,6 +280,8 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
   const assetPickerRef = useRef<HTMLInputElement | null>(null);
 
   const activeProject = projects.find((p) => p.id === selectedProjectId) || projects[0] || null;
+  const promptDraft = storyDraft?.projectId === activeProject?.id && storyDraft
+    ? storyDraft.premise : activeProject?.storyPrompt || '';
 
   const showToast = (type: 'success' | 'error' | 'info', text: string) => {
     setNotice({ type, text });
@@ -295,7 +312,6 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
 
   useEffect(() => {
     if (activeProject) {
-      setPromptDraft(activeProject.storyPrompt || '');
       setChapterUrlDraft(activeProject.chapterUrl || '');
       setChapterTitle('');
       setWatchedAllScenesInSession(false);
@@ -457,6 +473,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Could not update the story plan.');
       replaceProjectInState(data.project);
+      if (!suffix) setStoryDraft(undefined);
       if (suffix) setActiveStepNumber(5);
       showToast('success', suffix ? 'Episode or chapter production opened.' : 'Story and scene production plan saved.');
     } catch (error) {
@@ -467,18 +484,18 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
   };
 
   const handleSceneProductionAsset = async (
-    projectId: string, sceneNumber: number, action: 'dialogue-audio' | 'soundtrack' | 'update',
+    projectId: string, sceneNumber: number, action: 'image' | 'video' | 'dialogue-audio' | 'soundtrack' | 'update',
     payload: File | { cartoonEffect: string },
   ) => {
     setBusyAction('scene-media-' + sceneNumber);
     try {
       let data: Record<string, unknown>;
       if (payload instanceof File) {
-        if (!payload.size || payload.size > 10 * 1024 * 1024) throw new Error('Choose an audio file up to 10 MB.');
+        if (!payload.size || payload.size > 10 * 1024 * 1024) throw new Error('Choose a file up to 10 MB.');
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(String(reader.result || ''));
-          reader.onerror = reader.onabort = () => reject(new Error('Could not read the audio file.'));
+          reader.onerror = reader.onabort = () => reject(new Error('Could not read the media file.'));
           reader.readAsDataURL(payload);
         });
         data = { name: payload.name, mimeType: payload.type, dataUrl };
@@ -492,6 +509,8 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
       if (!response.ok || !result.success) throw new Error(result.error || 'Could not save scene media.');
       replaceProjectInState(result.project);
       const message = action === 'update' ? 'Effect saved. Run Step 7 to render it.'
+        : action === 'image' ? 'Scene image uploaded and cartoonized.'
+        : action === 'video' ? 'MP4 clip added to this scene.'
         : action === 'soundtrack' ? 'Scene music or sound effect saved.' : 'Scene dialogue saved.';
       showToast('success', message);
     } catch (error) {
@@ -519,7 +538,8 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
           projectType: newType,
           animationStyle: newStyle,
           aspectRatio: newAspect,
-          storyPrompt: `Create a story based on the project title "${name}".`,
+          language: newLanguage,
+          storyPrompt: newPremise.trim(),
         }),
       });
       const data = await res.json();
@@ -527,6 +547,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
       replaceProjectInState(data.project);
       setShowNewForm(false);
       setNewName('');
+      setNewPremise('');
       setWorkspaceView('workflow');
       setActiveStepNumber(3);
       showToast('success', `Created "${data.project.name}". Ready to generate full story.`);
@@ -727,11 +748,17 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Step execution failed');
       replaceProjectInState(data.project);
+      const failed = data.project.storyProduction && [6, 7, 8].includes(stepNumber)
+        && data.project.scenes.some((scene: CartoonSceneItem) =>
+          (!extra?.sceneNumber || scene.sceneNumber === extra.sceneNumber) &&
+          (stepNumber === 6 ? scene.imageStatus === 'failed'
+            : stepNumber === 7 ? scene.videoClipStatus === 'failed'
+            : scene.dialogueAudioStatus === 'missing'));
       addQueueItem({
         tool: 'AI Cartoon Creator',
         prompt: `${data.project.name} · Step ${stepNumber}`,
         provider: 'ZKMAP Studio Pipeline',
-        status: 'Completed',
+        status: failed ? 'Failed' : 'Completed',
         progress: 100,
       });
       if (stepNumber === 12) {
@@ -739,15 +766,9 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
         setIsPreviewPlaying(true);
         showToast('info', 'Status: Preview Ready — Editing Required before final approval.');
       } else {
-        const failed = data.project.storyProduction && [6, 7, 8].includes(stepNumber)
-          && data.project.scenes.some((scene: CartoonSceneItem) =>
-            (!extra?.sceneNumber || scene.sceneNumber === extra.sceneNumber) &&
-            (stepNumber === 6 ? scene.imageStatus === 'failed'
-              : stepNumber === 7 ? scene.videoClipStatus === 'failed'
-              : scene.dialogueAudioStatus === 'missing'));
         showToast(failed ? 'error' : 'success', failed ? 'Some media could not be made. See the scene errors below.' : `Step ${stepNumber} updated cleanly.`);
       }
-      return true;
+      return !failed;
     } catch (err: any) {
       showToast('error', err?.message || 'Could not execute step.');
       return false;
@@ -917,6 +938,36 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
     setBusyAction('timeline-sync');
     soundFx.playCinematicImpact();
     try {
+      const res = await projectFetch(`/api/cartoon-projects/${encodeURIComponent(project.id)}/run-step`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stepNumber: 13 }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.project) throw new Error(data.error || 'Failed to sync project to editing timeline.');
+      replaceProjectInState(data.project);
+
+      if (project.storyProduction) {
+        if (openEditorAfter) {
+          const clips: StoryVideoTimeline['clips'] = [];
+          let start = 0;
+          for (const scene of project.scenes) {
+            const duration = scene.durationSec;
+            const id = scene.id;
+            const name = `Scene ${scene.sceneNumber} · ${scene.title}`;
+            clips.push({ id, name, start, duration, trackId: 'v1', type: 'video', color: '#8b5cf6', assetUrl: scene.videoClipUrl });
+            if (scene.dialogueAudioUrl) clips.push({ id: id + '-voice', name: name + ' · Dialogue', start, duration,
+              trackId: 'a1', type: 'audio', color: '#38bdf8', assetUrl: scene.dialogueAudioUrl });
+            if (scene.soundtrackUrl) clips.push({ id: id + '-sfx', name: name + ' · Music & SFX', start, duration,
+              trackId: 'a2', type: 'audio', color: '#10b981', assetUrl: scene.soundtrackUrl, volume: 0.22 });
+            start += duration;
+          }
+          onOpenStoryTimeline({ projectId: project.id, title: project.name, aspectRatio: project.aspectRatio, clips });
+        } else {
+          setActiveStepNumber(14);
+          showToast('success', 'Scenes and audio are ready in the timeline.');
+        }
+        return;
+      }
+
       let audioStart = 0;
       for (const sc of project.scenes) {
         addAssetToTimeline({
@@ -966,24 +1017,14 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
         audioStart += sc.durationSec;
       }
 
-      const res = await projectFetch(`/api/cartoon-projects/${encodeURIComponent(project.id)}/run-step`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stepNumber: 13 }),
-      });
-      const data = await res.json();
-      if (res.ok && data.project) {
-        replaceProjectInState(data.project);
-      }
-
       if (openEditorAfter) {
         onNavigate('editor');
       } else {
         setActiveStepNumber(14);
         showToast('success', 'All scenes & voice tracks added to the Editing Timeline (Step 13 Complete).');
       }
-    } catch {
-      showToast('error', 'Failed to sync project to editing timeline.');
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Failed to sync project to editing timeline.');
     } finally {
       setBusyAction(null);
     }
@@ -1162,6 +1203,9 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
     : 'bg-slate-950 border border-slate-700 text-white focus:border-slate-400';
 
   const openIssues = activeProject?.qualityIssues.filter((q) => q.status === 'open') || [];
+  const needsStoryProduction = Boolean(activeProject && !activeProject.storyProduction &&
+    (activeProject.storyPlan || !activeProject.fullStory));
+  const displayedStep = needsStoryProduction && activeStepNumber > 3 ? 3 : activeStepNumber;
   const fixedVerifiedIssues =
     activeProject?.qualityIssues.filter((q) => q.status === 'fixed_verified') || [];
 
@@ -1191,7 +1235,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
               <span>AI Quality Checker &amp; Approval Gate</span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight">
-              AI Cartoon Film Creator
+              {filmMaker ? 'AI Film Maker' : 'AI Cartoon Film Creator'}
             </h1>
           </div>
 
@@ -1210,7 +1254,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                   id: 'quality',
                   label: `AI Quality Checker${openIssues.length > 0 ? ` (${openIssues.length})` : ''}`,
                 },
-              ].map((t) => (
+              ].filter(t => t.id !== 'az23' || !needsStoryProduction).map((t) => (
                 <button
                   key={t.id}
                   type="button"
@@ -1272,7 +1316,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
         {showNewForm && (
           <form onSubmit={handleCreateProject} className={`p-5 rounded-2xl border space-y-4 ${cardSurface}`}>
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold">Create New Cartoon / Manhwa Film Project</h2>
+              <h2 className="text-sm font-bold">Create a Story Video Project</h2>
               <button
                 type="button"
                 onClick={() => setShowNewForm(false)}
@@ -1283,7 +1327,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
             </div>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
               <div className="md:col-span-2 space-y-1">
-                <label htmlFor="new-cartoon-project-name" className="font-medium opacity-75">Project Name</label>
+                <label htmlFor="new-cartoon-project-name" className="font-medium opacity-75">Story Title</label>
                 <input
                   type="text"
                   id="new-cartoon-project-name"
@@ -1291,7 +1335,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                   maxLength={120}
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  placeholder={`Project ${String(projects.length + 1).padStart(3, '0')} – Cartoon Adventure`}
+                  placeholder="Enter your story title"
                   className={`w-full rounded-lg px-3 py-2 outline-none ${inputCls}`}
                 />
               </div>
@@ -1319,9 +1363,15 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                 </select>
               </div>
             </div>
+            <label className="block space-y-1 text-xs font-medium">
+              <span>Story idea, setting and characters</span>
+              <textarea rows={4} maxLength={3800} value={newPremise} onChange={event => setNewPremise(event.target.value)}
+                placeholder="Describe what happens in your story"
+                className={`w-full rounded-lg px-3 py-2 outline-none ${inputCls}`} />
+            </label>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
-              <div className="space-y-1">
-                <label className="font-medium opacity-75">Visual Style</label>
+              <label className="space-y-1">
+                <span className="font-medium opacity-75">Visual Style</span>
                 <select
                   value={newStyle}
                   onChange={(e) => setNewStyle(e.target.value)}
@@ -1329,9 +1379,19 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                 >
                   <option value="3D Stylized Cartoon">3D Stylized Cartoon</option>
                   <option value="2D Cel-Shaded Cartoon">2D Cel-Shaded Cartoon</option>
+                  <option value="Anime">Anime</option>
+                  <option value="Cinematic Film">Cinematic Film</option>
                   <option value="2D Cel Manhwa + Motion Parallax">2D Cel Manhwa + Motion Parallax</option>
                 </select>
-              </div>
+              </label>
+              <label className="space-y-1">
+                <span className="font-medium opacity-75">Story and Voice Language</span>
+                <select value={newLanguage} onChange={event => setNewLanguage(event.target.value)}
+                  className={`w-full rounded-lg px-3 py-2 outline-none ${inputCls}`}>
+                  <option value="Kannada">Kannada (ಕನ್ನಡ)</option>
+                  <option value="English">English</option>
+                </select>
+              </label>
             </div>
             <div className="flex justify-end gap-2">
               <button
@@ -1564,7 +1624,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                           type="button"
                           onClick={() => {
                             setSelectedProjectId(proj.id);
-                            setActiveStepNumber(proj.currentStepNumber);
+                            setActiveStepNumber(!proj.storyProduction && (proj.storyPlan || !proj.fullStory) ? 3 : proj.currentStepNumber);
                             setWorkspaceView('workflow');
                           }}
                           className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap ${
@@ -1613,7 +1673,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
         )}
 
         {/* VIEW 1B: PHASE 1 — 23-STEP A–Z WORKFLOW PIPELINE & GENERATION JOB MONITOR */}
-        {workspaceView === 'az23' && activeProject && (
+        {workspaceView === 'az23' && activeProject && !needsStoryProduction && (
           <Az23PipelineMonitor
             theme={theme}
             project={activeProject}
@@ -1704,14 +1764,15 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                 {activeProject.stepStates.map((st) => {
                   const meta = renderStepStatusLabel(st.status);
                   const Icon = meta.Icon;
-                  const isActive = activeStepNumber === st.stepNumber;
+                  const isActive = displayedStep === st.stepNumber;
 
                   return (
                     <button
                       key={st.stepNumber}
                       type="button"
+                      disabled={needsStoryProduction && st.stepNumber > 3}
                       onClick={() => setActiveStepNumber(st.stepNumber)}
-                      className={`w-full text-left px-3 py-2.5 rounded-xl border text-xs flex items-start justify-between gap-2 transition-colors ${
+                      className={`w-full text-left px-3 py-2.5 rounded-xl border text-xs flex items-start justify-between gap-2 transition-colors disabled:opacity-50 ${
                         isActive
                           ? isLight
                             ? 'bg-neutral-950 text-white border-neutral-950'
@@ -1821,14 +1882,14 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
               <div className={`rounded-2xl border p-6 space-y-6 ${cardSurface}`}>
                 {(() => {
                   const stepMeta = activeProject.stepStates.find(
-                    (s) => s.stepNumber === activeStepNumber
+                    (s) => s.stepNumber === displayedStep
                   );
                   const statusUi = stepMeta ? renderStepStatusLabel(stepMeta.status) : null;
                   return (
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-200 dark:border-slate-800 pb-4">
                       <div>
                         <div className="text-xs opacity-60">
-                          Step {activeStepNumber} of 17 · {activeProject.name}
+                          Step {displayedStep} of 17 · {activeProject.name}
                         </div>
                         <h2 className="text-lg font-bold">{stepMeta?.label}</h2>
                       </div>
@@ -1850,7 +1911,8 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                       <textarea
                         rows={4}
                         value={promptDraft}
-                        onChange={(e) => setPromptDraft(e.target.value)}
+                        onChange={event => setStoryDraft({ projectId: activeProject.id, premise: event.target.value })}
+                        maxLength={3800}
                         className={`w-full rounded-xl p-3 text-sm outline-none ${inputCls}`}
                       />
                     </div>
@@ -2003,7 +2065,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                 )}
 
                 {/* STEP 3: Generate Full Story */}
-                {activeStepNumber === 3 && (
+                {displayedStep === 3 && (
                   <div className="space-y-4">
                     {activeProject.storyProduction ? (
                       <div className={`p-4 rounded-xl border text-xs whitespace-pre-line leading-relaxed ${mutedSurface}`}>
@@ -2014,6 +2076,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                       <CartoonStoryPlanner key={activeProject.id}
                         title={activeProject.movieTitle || activeProject.name}
                         premise={promptDraft} plan={activeProject.storyPlan}
+                        defaultCount={activeProject.projectType === 'Short Cartoon Video' ? 1 : 3}
                         inputClassName={inputCls} disabled={Boolean(busyAction)}
                         onGenerate={input => handleStoryPlannerRequest('', input)}
                         onOpen={number => handleStoryPlannerRequest('/' + number + '/production')} />
@@ -2025,7 +2088,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                       </details>
                     )}
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      {(!activeProject.storyPlan || activeProject.storyProduction) && (
+                      {((!activeProject.storyPlan && activeProject.fullStory) || activeProject.storyProduction) && (
                         <>
                       <button
                         type="button"
@@ -2055,7 +2118,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                 )}
 
                 {/* STEP 4: Generate Characters */}
-                {activeStepNumber === 4 && (
+                {displayedStep === 4 && (
                   <div className="space-y-4">
                     {activeProject.characters.length === 0 ? (
                       <div className={`p-6 rounded-xl border text-center text-xs space-y-3 ${mutedSurface}`}>
@@ -2109,12 +2172,17 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                 )}
 
                 {/* STEPS 5 - 7: Storyboard, Story Images & Cartoon Video Clips */}
-                {(activeStepNumber === 5 || activeStepNumber === 6 || activeStepNumber === 7) && (
+                {(displayedStep === 5 || displayedStep === 6 || displayedStep === 7) && (
                   <div className="space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="text-xs opacity-75">
                         Each scene card tracks image generation, character seed consistency, and cartoon video clip status.
                       </div>
+                        {activeProject.storyProduction && activeStepNumber === 7 && (
+                          <p className="text-xs opacity-75">
+                            Upload an MP4 (up to 10 MB per scene) from <a className="underline" href="https://github.com/FlashML-org/FreeVideo" target="_blank" rel="noreferrer">FreeVideo</a> or another editor. Add dialogue and sound in Steps 8–9.
+                          </p>
+                        )}
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
@@ -2247,12 +2315,34 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                               </div>
 
                               {sc.production && activeStepNumber === 7 && (
+                                <div className="space-y-2">
+                                <label className="block text-xs font-semibold">Upload MP4 for scene {sc.sceneNumber}
+                                  <input type="file" accept="video/mp4,.mp4" disabled={Boolean(busyAction)}
+                                    className="mt-1 block w-full text-xs"
+                                    onChange={event => {
+                                      const file = event.currentTarget.files?.[0];
+                                      event.currentTarget.value = '';
+                                      if (file) void handleSceneProductionAsset(activeProject.id, sc.sceneNumber, 'video', file);
+                                    }} />
+                                </label>
                                 <label className="block text-xs font-semibold">Video effect
                                   <select value={sc.production.effect} disabled={Boolean(busyAction)}
                                     className={`ml-2 rounded-lg p-1.5 ${inputCls}`}
                                     onChange={event => void handleSceneProductionAsset(activeProject.id, sc.sceneNumber, 'update', { cartoonEffect: event.target.value })}>
                                     {Object.entries(STORY_EFFECTS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                                   </select>
+                                </label>
+                                </div>
+                              )}
+                              {sc.production && activeStepNumber === 6 && (
+                                <label className="block text-xs font-semibold">Upload image for scene {sc.sceneNumber}
+                                  <input type="file" accept="image/jpeg,image/png,image/webp" disabled={Boolean(busyAction)}
+                                    className="mt-1 block w-full text-xs"
+                                    onChange={event => {
+                                      const file = event.currentTarget.files?.[0];
+                                      event.currentTarget.value = '';
+                                      if (file) void handleSceneProductionAsset(activeProject.id, sc.sceneNumber, 'image', file);
+                                    }} />
                                 </label>
                               )}
                               <div className="flex flex-wrap gap-2 pt-1">
@@ -2294,7 +2384,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                 )}
 
                 {/* STEPS 8 - 11: Dialogue Audio, Music/SFX, VFX, A/V Sync */}
-                {activeStepNumber >= 8 && activeStepNumber <= 11 && (
+                {displayedStep >= 8 && displayedStep <= 11 && (
                   <div className="space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-xs opacity-75">
@@ -2413,7 +2503,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                 )}
 
                 {/* STEP 12: Preview Complete Film (Preview Is NOT Final Confirmation!) */}
-                {activeStepNumber === 12 && (
+                {displayedStep === 12 && (
                   <div className="space-y-4">
                     {activeProject.scenes.length > 0 && (
                       <div className="rounded-2xl overflow-hidden border border-neutral-800 bg-black text-white">
@@ -2549,7 +2639,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                 )}
 
                 {/* STEPS 13 - 14: Timeline Sync + Edit and Fix Mistakes */}
-                {(activeStepNumber === 13 || activeStepNumber === 14) && (
+                {(displayedStep === 13 || displayedStep === 14) && (
                   <div className="space-y-4">
                     <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${mutedSurface}`}>
                       <div className="space-y-1 text-xs">
@@ -2762,7 +2852,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                 )}
 
                 {/* STEPS 15 - 17: Final Approval -> Render Final MP4 -> Verify -> Download MP4 */}
-                {activeStepNumber >= 15 && (
+                {displayedStep >= 15 && (
                   <div className="space-y-5">
                     {(!activeProject.previewGenerated ||
                       !activeProject.timelineAdded ||

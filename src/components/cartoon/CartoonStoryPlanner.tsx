@@ -5,17 +5,18 @@ interface Props {
   title: string;
   premise: string;
   plan?: CartoonStoryPlan;
+  defaultCount: number;
   inputClassName: string;
   disabled: boolean;
   onGenerate: (input: { title: string; premise: string; format: string; count: number; unitTitles: string }) => Promise<void>;
   onOpen: (number: number) => Promise<void>;
 }
 
-export function CartoonStoryPlanner({ title, premise, plan, inputClassName, disabled, onGenerate, onOpen }: Props) {
+export function CartoonStoryPlanner({ title, premise, plan, defaultCount, inputClassName, disabled, onGenerate, onOpen }: Props) {
   const [storyTitle, setStoryTitle] = useState(plan?.title || title);
   const [idea, setIdea] = useState(plan?.premise ?? premise);
   const [format, setFormat] = useState(plan?.format || 'episodes');
-  const [count, setCount] = useState(plan?.units.length || 3);
+  const [count, setCount] = useState(plan?.units.length || defaultCount);
   const [titles, setTitles] = useState(plan?.units.map(unit => unit.title).join('\n') || '');
   const [submitting, setSubmitting] = useState(false);
 

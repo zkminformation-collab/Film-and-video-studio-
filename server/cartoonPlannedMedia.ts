@@ -16,7 +16,8 @@ export async function cartoonizeSceneImage(source: string, output: string) {
 }
 
 export async function encodePlannedCartoonScene(input: {
-  image: string;
+  source: string;
+  motion?: boolean;
   output: string;
   duration: number;
   aspect: string;
@@ -33,11 +34,12 @@ export async function encodePlannedCartoonScene(input: {
     monochrome: 'hue=s=0',
     zoom: "zoompan=z='min(max(zoom,pzoom)+0.0013,1.18)':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s=" + width + 'x' + height + ':fps=24',
   };
+  const extend = input.motion ? 'tpad=stop_mode=clone:stop_duration=' + duration
+    : 'trim=end_frame=1,loop=loop=-1:size=1:start=0,setpts=N/(24*TB)';
 
   await exec('ffmpeg', [
-    ...inputArgs, '-protocol_whitelist', 'file', '-threads', '1', '-max_pixels', '17000000', '-i', input.image,
-    '-vf', [fit, 'trim=end_frame=1', 'loop=loop=-1:size=1:start=0', 'setpts=N/(24*TB)',
-      'fps=24', effectFilters[input.effect] || 'null', 'setsar=1', 'format=yuv420p'].join(','),
+    ...inputArgs, '-protocol_whitelist', 'file', '-threads', '1', '-max_pixels', '17000000', '-i', input.source,
+    '-map', '0:v:0', '-vf', [fit, extend, 'fps=24', effectFilters[input.effect] || 'null', 'setsar=1', 'format=yuv420p'].join(','),
     '-t', String(duration), '-an', '-c:v', 'libx264', '-threads', '2', '-preset', 'veryfast', '-crf', '23',
     '-movflags', '+faststart', input.output,
   ], { timeout: 75_000 });
