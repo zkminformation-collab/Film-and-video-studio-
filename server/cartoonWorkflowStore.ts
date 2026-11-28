@@ -172,6 +172,7 @@ export interface RenderExportSettings {
 
 export interface CartoonFilmProject {
   id: string;
+  ownerUserId?: string;
   name: string;
   movieTitle?: string;
   projectType: ProjectCategory;
@@ -1182,6 +1183,7 @@ export function getCartoonProject(id: string): CartoonFilmProject | null {
 
 export function createCartoonProject(input: {
   name: string;
+  ownerUserId?: string;
   movieTitle?: string;
   projectType?: ProjectCategory;
   animationStyle?: string;
@@ -1235,6 +1237,7 @@ export function createCartoonProject(input: {
   })) || [];
   const created = recomputeProjectSteps({
     id,
+    ownerUserId: input.ownerUserId,
     name: cleanName,
     movieTitle: String(input.movieTitle || cleanName).trim().slice(0, 120),
     projectType,
@@ -1298,6 +1301,7 @@ export function openCartoonStoryProduction(projectId: string, unitNumber: number
     project.storyProduction.unit.number === unitNumber);
   if (existing) return existing;
   return createCartoonProject({
+    ownerUserId: parent.ownerUserId,
     name: plan.title + ' · ' + unit.number + ' · ' + unit.title,
     movieTitle: unit.title,
     storyPrompt: unit.story,
@@ -1693,6 +1697,7 @@ export async function preparePlannedCartoonMedia(
             const [generated] = await generateStudioImages({
               prompt: scene.production.imagePrompt, style: project.animationStyle, aspectRatio: project.aspectRatio,
               resolution: '768px', count: 1, projectId, projectName: project.name, titlePrefix: scene.title,
+              ownerUserId: project.ownerUserId, projectMedia: true,
             });
             original = generated?.url;
             provider = generated?.provider;

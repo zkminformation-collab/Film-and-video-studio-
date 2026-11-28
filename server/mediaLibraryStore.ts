@@ -27,6 +27,8 @@ export interface LibraryUploadedAsset {
   tags: string[];
   projectId?: string;
   projectName?: string;
+  ownerUserId?: string;
+  projectMedia?: boolean;
   timelineTrack: string;
   addedAt: string;
 }
@@ -151,6 +153,8 @@ export function saveUploadedLibraryAsset(input: {
   tags?: string[];
   projectId?: string;
   projectName?: string;
+  ownerUserId?: string;
+  projectMedia?: boolean;
 }): LibraryUploadedAsset {
   ensureStorage();
 
@@ -192,6 +196,8 @@ export function saveUploadedLibraryAsset(input: {
       : ['Uploaded', ext.toUpperCase()],
     projectId: input.projectId ? String(input.projectId).trim() : undefined,
     projectName: input.projectName ? String(input.projectName).trim() : undefined,
+    ownerUserId: input.ownerUserId,
+    projectMedia: input.projectMedia,
     timelineTrack: resolveTimelineTrack(resolvedCategory),
     addedAt: new Date().toISOString().split('T')[0],
   };
@@ -232,6 +238,8 @@ export function registerExistingLibraryAsset(input: {
   tags?: string[];
   projectId?: string;
   projectName?: string;
+  ownerUserId?: string;
+  projectMedia?: boolean;
   timelineTrack?: string;
 }): LibraryUploadedAsset {
   ensureStorage();
@@ -265,6 +273,8 @@ export function registerExistingLibraryAsset(input: {
     tags: Array.isArray(input.tags) && input.tags.length > 0 ? input.tags : ['Cartoon Studio', resolvedCategory],
     projectId: input.projectId ? String(input.projectId).trim() : undefined,
     projectName: input.projectName ? String(input.projectName).trim() : undefined,
+    ownerUserId: input.ownerUserId,
+    projectMedia: input.projectMedia,
     timelineTrack: input.timelineTrack || resolveTimelineTrack(resolvedCategory),
     addedAt: new Date().toISOString().split('T')[0],
   };
@@ -287,6 +297,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
   language?: string;
   thumbnailUrl?: string;
   storyProduction?: unknown;
+  ownerUserId?: string;
   referenceImages?: Array<{ id: string; name: string; url: string; mimeType: string; sizeBytes: number }>;
   characters?: Array<{ id: string; name: string; role: string; appearancePrompt: string; avatarUrl: string; voiceStyle?: string }>;
   scenes?: Array<{
@@ -336,7 +347,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
       thumbnail: refImg.url,
       description: `Reference artwork for "${projectName}".`,
       tags: ['Cartoon Creator', 'Reference', styleTag],
-      projectId,
+      projectId, ownerUserId: project.ownerUserId, projectMedia: true,
       projectName,
       timelineTrack: 'Image',
     });
@@ -357,7 +368,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
       thumbnail: ch.avatarUrl,
       description: ch.appearancePrompt || `Character rig for ${projectName}.`,
       tags: ['Character', ch.role, styleTag, projectId],
-      projectId,
+      projectId, ownerUserId: project.ownerUserId, projectMedia: true,
       projectName,
       timelineTrack: 'Character / Image',
     });
@@ -384,7 +395,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
           category: file.category, subcategory: file.label, source: 'rendered', format: file.format,
           mimeType: file.mimeType, sizeBytes, url: file.url, thumbnail: thumb,
           durationSeconds: file.category === 'video' ? scene.durationSec : undefined,
-          description: scene.description, tags: ['Cartoon Creator', file.label, styleTag], projectId, projectName,
+          description: scene.description, tags: ['Cartoon Creator', file.label, styleTag], projectId, projectName, ownerUserId: project.ownerUserId, projectMedia: true,
         });
         count++;
       }
@@ -404,7 +415,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
         thumbnail: thumb,
         description: scene.description,
         tags: ['Story Image', `Scene ${scene.sceneNumber}`, styleTag],
-        projectId,
+        projectId, ownerUserId: project.ownerUserId, projectMedia: true,
         projectName,
         timelineTrack: 'Image',
       });
@@ -420,7 +431,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
         thumbnail: thumb,
         description: `Background plate extracted for Scene ${scene.sceneNumber} of "${projectName}".`,
         tags: ['Background', `Scene ${scene.sceneNumber}`, styleTag],
-        projectId,
+        projectId, ownerUserId: project.ownerUserId, projectMedia: true,
         projectName,
         timelineTrack: 'Image',
       });
@@ -440,7 +451,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
         thumbnail: thumb,
         description: `Animated cartoon clip for Scene ${scene.sceneNumber} (${project.aspectRatio || '16:9'}).`,
         tags: ['Cartoon Clip', `Scene ${scene.sceneNumber}`, styleTag],
-        projectId,
+        projectId, ownerUserId: project.ownerUserId, projectMedia: true,
         projectName,
         timelineTrack: 'Video',
       });
@@ -460,7 +471,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
         thumbnail: '/assets/images/feature_voice_dubbing_1794901010817.jpg',
         description: scene.dialogueText,
         tags: ['AI Dialogue', project.language || 'English', `Scene ${scene.sceneNumber}`],
-        projectId,
+        projectId, ownerUserId: project.ownerUserId, projectMedia: true,
         projectName,
         timelineTrack: 'Voice',
       });
@@ -480,7 +491,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
         thumbnail: '/assets/images/cinema_soundstage_set_1794406569758.jpg',
         description: `Background music bed for Scene ${scene.sceneNumber}: ${scene.musicSfxPreset}.`,
         tags: ['Music', scene.musicSfxPreset, `Scene ${scene.sceneNumber}`],
-        projectId,
+        projectId, ownerUserId: project.ownerUserId, projectMedia: true,
         projectName,
         timelineTrack: 'Music',
       });
@@ -496,7 +507,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
         thumbnail: '/assets/images/cinema_soundstage_set_1794406569758.jpg',
         description: `Foley & sound effects layer for Scene ${scene.sceneNumber}.`,
         tags: ['SFX', scene.musicSfxPreset, `Scene ${scene.sceneNumber}`],
-        projectId,
+        projectId, ownerUserId: project.ownerUserId, projectMedia: true,
         projectName,
         timelineTrack: 'SFX',
       });
@@ -516,7 +527,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
         thumbnail: '/assets/images/cartoon_vfx_explosions_1794980039460.jpg',
         description: `VFX compositing layer (${scene.vfxPreset}) for Scene ${scene.sceneNumber}.`,
         tags: ['VFX', scene.vfxPreset, `Scene ${scene.sceneNumber}`],
-        projectId,
+        projectId, ownerUserId: project.ownerUserId, projectMedia: true,
         projectName,
         timelineTrack: 'VFX',
       });
@@ -532,7 +543,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
         thumbnail: thumb,
         description: `Character animation & motion layer for Scene ${scene.sceneNumber}.`,
         tags: ['Animation', styleTag, `Scene ${scene.sceneNumber}`],
-        projectId,
+        projectId, ownerUserId: project.ownerUserId, projectMedia: true,
         projectName,
         timelineTrack: 'Video',
       });
@@ -552,7 +563,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
         thumbnail: thumb,
         description: scene.subtitleText,
         tags: ['Subtitles', 'SRT', `Scene ${scene.sceneNumber}`],
-        projectId,
+        projectId, ownerUserId: project.ownerUserId, projectMedia: true,
         projectName,
         timelineTrack: 'Overlay',
       });
@@ -574,7 +585,7 @@ export function syncCartoonProjectAssetsToLibrary(project: {
       thumbnail: project.thumbnailUrl || '/assets/images/cartoon_adventure_thumb_1794924309261.jpg',
       description: `Verified final MP4 render from "${projectName}" (${styleTag}, ${project.aspectRatio || '16:9'}).`,
       tags: ['Rendered MP4', 'FFmpeg Verified', styleTag, project.projectType || 'Cartoon Film'],
-      projectId,
+      projectId, ownerUserId: project.ownerUserId, projectMedia: true,
       projectName,
       timelineTrack: 'Video',
     });

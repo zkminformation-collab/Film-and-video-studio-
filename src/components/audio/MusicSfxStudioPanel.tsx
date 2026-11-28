@@ -1,3 +1,5 @@
+import { useAuth } from '../../context/AuthContext';
+import { requestCartoonProject } from '../../utils/cartoonProjectApi';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Music,
@@ -64,6 +66,7 @@ const SFX_PROMPT_EXAMPLES = [
 ];
 
 export const MusicSfxStudioPanel: React.FC = () => {
+  const { firebaseUser } = useAuth();
   const { addAudioClip, audioClips } = useStudioAi();
   const [activeMode, setActiveMode] = useState<'music' | 'sfx' | 'suggestions'>('music');
   const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
@@ -118,15 +121,7 @@ export const MusicSfxStudioPanel: React.FC = () => {
 
   useEffect(() => {
     void loadAudioLibrary();
-    fetch('/api/cartoon-projects')
-      .then((r) => r.json())
-      .then((d) => {
-        if (Array.isArray(d?.projects) && d.projects.length > 0) {
-          setProjects(d.projects.map((p: any) => ({ id: p.id, name: p.name })));
-          setSelectedProjectId(d.projects[0].id);
-        }
-      })
-      .catch(() => {});
+
 
     return () => {
       if (audioRef.current) {
@@ -135,6 +130,23 @@ export const MusicSfxStudioPanel: React.FC = () => {
       }
     };
   }, []);
+
+  useEffect(() => {
+    setProjects([]);
+    setSelectedProjectId('');
+    if (!firebaseUser?.emailVerified) return;
+    const controller = new AbortController();
+    requestCartoonProject(firebaseUser, '/api/cartoon-projects', { signal: controller.signal })
+      .then((r) => r.json())
+      .then((d) => {
+        if (Array.isArray(d?.projects) && d.projects.length > 0) {
+          setProjects(d.projects.map((p: any) => ({ id: p.id, name: p.name })));
+          setSelectedProjectId(d.projects[0].id);
+        }
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [firebaseUser]);
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
 

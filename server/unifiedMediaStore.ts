@@ -340,9 +340,9 @@ export function unlinkAssetFromProject(assetId: string, projectId: string): stri
   return db.asset_project_links.filter((l) => l.asset_id === assetId).map((l) => l.project_id);
 }
 
-export function getUnifiedLicenseSummary() {
+export function getUnifiedLicenseSummary(canRead: (asset: UnifiedMediaAsset) => boolean = () => true) {
   const db = readDb();
-  const active = db.media_assets.filter((a) => a.status !== 'deleted');
+  const active = db.media_assets.filter((a) => a.status !== 'deleted' && canRead(a));
   const byLicense: Record<string, number> = {};
   let commercialYes = 0;
   let pendingVerification = 0;
