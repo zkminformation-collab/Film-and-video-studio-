@@ -472,13 +472,13 @@ export function getSanitizedBillingState(userId?: string, includeAll?: boolean) 
     ? db.payments
     : cleanUserId
     ? db.payments.filter((p) => p.userId === cleanUserId)
-    : db.payments;
+    : [];
 
   const userTransactions = includeAll
     ? db.creditTransactions
     : cleanUserId
     ? db.creditTransactions.filter((t) => t.userId === cleanUserId)
-    : db.creditTransactions;
+    : [];
 
   const subscription = cleanUserId ? db.subscriptions[cleanUserId] || null : null;
 
@@ -510,43 +510,43 @@ function readFirebaseApiKey(): string {
   return '';
 }
 
-export async function verifyAdminBearerToken(authorizationHeader?: string): Promise<string> {
-  const raw = String(authorizationHeader || '').trim();
-  const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';
-  if (!token) {
-    throw new Error('Administrator sign-in token is required to modify pricing.');
-  }
+export interface BillingIdentity {
+  userId: string;
+  email: string;
+  isAdmin: boolean;
+}
+
+export async function readBillingIdentity(authorizationHeader?: string): Promise<BillingIdentity | null> {
+  const match = /^Bearer\s+(\S+)$/i.exec(authorizationHeader?.trim() || '');
+  if (!match) return null;
 
   const apiKey = readFirebaseApiKey();
-  if (!apiKey) {
-    throw new Error('Firebase Web API key missing on server for admin verification.');
-  }
+  if (!apiKey) throw new Error('Firebase verification is unavailable.');
 
-  const res = await fetch(
+  const response = await fetch(
     `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idToken: token }),
-    }
+      body: JSON.stringify({ idToken: match[1] }),
+      signal: AbortSignal.timeout(10_000),
+    },
   );
-  if (!res.ok) {
-    throw new Error('Invalid or expired administrator authentication session.');
-  }
+  if (response.status === 400 || response.status === 401 || response.status === 403) return null;
+  if (!response.ok) throw new Error('Firebase verification is unavailable.');
 
-  const data = (await res.json()) as {
-    users?: Array<{ email?: string; emailVerified?: boolean }>;
+  const data = (await response.json()) as {
+    users?: Array<{ localId?: string; email?: string; emailVerified?: boolean; disabled?: boolean }>;
   };
-  const verifiedUser = data.users?.[0];
-  if (
-    !verifiedUser ||
-    verifiedUser.emailVerified !== true ||
-    verifiedUser.email !== PRIMARY_ADMIN_EMAIL
-  ) {
-    throw new Error('Access denied: Only authorized studio administrators can edit pricing.');
-  }
+  const user = data.users?.[0];
+  if (!user?.localId || !user.email || user.emailVerified !== true || user.disabled) return null;
+  return { userId: user.localId, email: user.email, isAdmin: user.email === PRIMARY_ADMIN_EMAIL };
+}
 
-  return verifiedUser.email;
+export async function verifyAdminBearerToken(authorizationHeader?: string): Promise<string> {
+  const identity = await readBillingIdentity(authorizationHeader);
+  if (!identity?.isAdmin) throw new Error('Access denied: An authorized administrator session is required.');
+  return identity.email;
 }
 
 export function updateAdminPricingConfig(
@@ -1269,11 +1269,11 @@ export function processRazorpayWebhook(rawBody: string, signatureHeader: string)
   return { ok: true, event: eventName };
 }
 
-export function getInvoiceHtmlById(invoiceId: string): string | null {
+export function getInvoiceHtmlById(invoiceId: string, identity: BillingIdentity): string | null {
   const db = loadBillingDb();
   const cleanId = String(invoiceId || '').trim();
   const payment = db.payments.find((p) => p.invoiceId === cleanId || p.id === cleanId);
-  if (!payment) return null;
+  if (!payment || (!identity.isAdmin && payment.userId !== identity.userId)) return null;
 
   const esc = (v: unknown) =>
     String(v ?? '')
