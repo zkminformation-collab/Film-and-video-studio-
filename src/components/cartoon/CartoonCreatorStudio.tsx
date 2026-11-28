@@ -28,6 +28,9 @@ import {
 } from 'lucide-react';
 import { StudioModule, StudioTheme } from '../../types';
 import { useStudioAi } from '../../context/StudioAiContext';
+import { useAuth } from '../../context/AuthContext';
+import type { User } from 'firebase/auth';
+import { requestCartoonProject, downloadCartoonProjectMp4 } from '../../utils/cartoonProjectApi';
 import { soundFx } from '../../utils/audioSynth';
 import { handleImageError } from '../../utils/imageUtils';
 import {
@@ -196,10 +199,29 @@ const QUALITY_CHECK_RULES = [
   'Video rendering errors',
 ];
 
-export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
+export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = (props) => {
+  const { authReady, firebaseUser, openAuthModal } = useAuth();
+  if (!authReady) return <p role="status" className="p-6">Loading studio session…</p>;
+  if (!firebaseUser?.emailVerified) {
+    return (
+      <section className="space-y-3 p-6">
+        <h2 className="font-bold">Cartoon Creator</h2>
+        <p className="text-sm">Sign in with a verified Studio account to access your projects.</p>
+        <button type="button" onClick={() => openAuthModal()} className="rounded-lg bg-amber-500 px-4 py-2 font-semibold text-slate-950">
+          Sign in
+        </button>
+      </section>
+    );
+  }
+  return <CartoonCreatorWorkspace key={firebaseUser.uid} {...props} user={firebaseUser} />;
+};
+
+const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User }> = ({
   theme,
   onNavigate,
+  user,
 }) => {
+  const projectFetch = useCallback((url: string, init?: RequestInit) => requestCartoonProject(user, url, init), [user]);
   const { addAssetToTimeline, addAudioClip, addQueueItem } = useStudioAi();
   const isLight = theme === 'elevenlabs';
 
@@ -251,18 +273,20 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
   const fetchProjects = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/cartoon-projects');
+      const res = await projectFetch('/api/cartoon-projects');
       const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Could not load cartoon film projects.');
       if (Array.isArray(data.projects)) {
         setProjects(data.projects);
-        setSelectedProjectId((prev) => prev || data.projects[0]?.id || null);
+        setSelectedProjectId((prev) => data.projects.some((p: CartoonFilmProject) => p.id === prev)
+          ? prev : data.projects[0]?.id || null);
       }
-    } catch {
-      showToast('error', 'Could not load cartoon film projects.');
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Could not load cartoon film projects.');
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [projectFetch]);
 
   useEffect(() => {
     void fetchProjects();
@@ -283,7 +307,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     if (!activeProject) return;
     setBusyAction(`az-${azStepNumber}`);
     try {
-      const res = await fetch(
+      const res = await projectFetch(
         `/api/cartoon-projects/${encodeURIComponent(activeProject.id)}/az-step`,
         {
           method: 'POST',
@@ -313,7 +337,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     if (!activeProject) return;
     setBusyAction('meta-save');
     try {
-      const res = await fetch(
+      const res = await projectFetch(
         `/api/cartoon-projects/${encodeURIComponent(activeProject.id)}`,
         {
           method: 'PATCH',
@@ -424,7 +448,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     if (!activeProject) return;
     setBusyAction('story-plan');
     try {
-      const response = await fetch('/api/cartoon-projects/' + encodeURIComponent(activeProject.id) + '/story-plan' + suffix, {
+      const response = await projectFetch('/api/cartoon-projects/' + encodeURIComponent(activeProject.id) + '/story-plan' + suffix, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload || {}),
@@ -460,7 +484,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
       } else {
         data = payload;
       }
-      const response = await fetch('/api/cartoon-projects/' + encodeURIComponent(projectId) + '/scenes/' + sceneNumber + '/' + action, {
+      const response = await projectFetch('/api/cartoon-projects/' + encodeURIComponent(projectId) + '/scenes/' + sceneNumber + '/' + action, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
       });
       const result = await response.json();
@@ -486,7 +510,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     setBusyAction('creating');
     soundFx.playScannerBeep();
     try {
-      const res = await fetch('/api/cartoon-projects', {
+      const res = await projectFetch('/api/cartoon-projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -515,7 +539,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
   const handleDeleteProject = async (id: string) => {
     setBusyAction(`del-${id}`);
     try {
-      const res = await fetch(`/api/cartoon-projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const res = await projectFetch(`/api/cartoon-projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
       const data = await res.json();
       if (Array.isArray(data.projects)) {
         setProjects(data.projects);
@@ -596,7 +620,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
       let saved = 0;
       for (const asset of encoded) {
         try {
-          const response = await fetch(`/api/cartoon-projects/${encodeURIComponent(projectId)}/assets`, {
+          const response = await projectFetch(`/api/cartoon-projects/${encodeURIComponent(projectId)}/assets`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ assets: [asset] }),
@@ -631,7 +655,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
   const handleRemoveReferenceAsset = async (projectId: string, assetId: string) => {
     setBusyAction(`del-asset-${assetId}`);
     try {
-      const res = await fetch(
+      const res = await projectFetch(
         `/api/cartoon-projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`,
         { method: 'DELETE' }
       );
@@ -655,7 +679,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     setBusyAction('manhwa-import');
     soundFx.playScannerBeep();
     try {
-      const res = await fetch(
+      const res = await projectFetch(
         `/api/cartoon-projects/${encodeURIComponent(projectId)}/manhwa-import`,
         {
           method: 'POST',
@@ -689,7 +713,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     setBusyAction(`step-${stepNumber}`);
     soundFx.playScannerBeep();
     try {
-      const res = await fetch(`/api/cartoon-projects/${encodeURIComponent(projectId)}/run-step`, {
+      const res = await projectFetch(`/api/cartoon-projects/${encodeURIComponent(projectId)}/run-step`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -743,7 +767,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
       let latest = project;
       for (const st of failedSteps) {
         if (st.stepNumber === 14) continue;
-        const res = await fetch(`/api/cartoon-projects/${encodeURIComponent(project.id)}/run-step`, {
+        const res = await projectFetch(`/api/cartoon-projects/${encodeURIComponent(project.id)}/run-step`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ stepNumber: st.stepNumber, restartFailedOnly: true }),
@@ -752,7 +776,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
         if (res.ok && data.project) latest = data.project;
       }
       // Run quality check after restarting failed steps
-      const qcRes = await fetch(`/api/cartoon-projects/${encodeURIComponent(project.id)}/quality-check`, {
+      const qcRes = await projectFetch(`/api/cartoon-projects/${encodeURIComponent(project.id)}/quality-check`, {
         method: 'POST',
       });
       const qcData = await qcRes.json();
@@ -774,7 +798,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     setBusyAction('quality-check');
     soundFx.playScannerBeep();
     try {
-      const res = await fetch(`/api/cartoon-projects/${encodeURIComponent(projectId)}/quality-check`, {
+      const res = await projectFetch(`/api/cartoon-projects/${encodeURIComponent(projectId)}/quality-check`, {
         method: 'POST',
       });
       const data = await res.json();
@@ -803,7 +827,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     setBusyAction(`issue-${issue.id}`);
     soundFx.playScannerBeep();
     try {
-      const res = await fetch(`/api/cartoon-projects/${encodeURIComponent(projectId)}/quality-fix`, {
+      const res = await projectFetch(`/api/cartoon-projects/${encodeURIComponent(projectId)}/quality-fix`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ issueId: issue.id, action }),
@@ -838,7 +862,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
   const handleSaveSceneEdit = async (projectId: string, sceneNumber: number, regenerate = false) => {
     setBusyAction(`scene-${sceneNumber}`);
     try {
-      const res = await fetch(
+      const res = await projectFetch(
         `/api/cartoon-projects/${encodeURIComponent(projectId)}/scenes/${sceneNumber}/update`,
         {
           method: 'POST',
@@ -873,7 +897,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
   ) => {
     setBusyAction(`reorder-${sceneNumber}`);
     try {
-      const res = await fetch(
+      const res = await projectFetch(
         `/api/cartoon-projects/${encodeURIComponent(projectId)}/scenes/${sceneNumber}/update`,
         {
           method: 'POST',
@@ -941,7 +965,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
         audioStart += sc.durationSec;
       }
 
-      const res = await fetch(`/api/cartoon-projects/${encodeURIComponent(project.id)}/run-step`, {
+      const res = await projectFetch(`/api/cartoon-projects/${encodeURIComponent(project.id)}/run-step`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stepNumber: 13 }),
@@ -968,7 +992,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     setBusyAction('approve');
     soundFx.playCinematicImpact();
     try {
-      const res = await fetch(`/api/cartoon-projects/${encodeURIComponent(project.id)}/approve`, {
+      const res = await projectFetch(`/api/cartoon-projects/${encodeURIComponent(project.id)}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -987,11 +1011,22 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
     }
   };
 
+  const downloadFinalMp4 = async (projectId: string, filename?: string) => {
+    setBusyAction('download-mp4');
+    try {
+      await downloadCartoonProjectMp4(user, `/api/cartoon-projects/${encodeURIComponent(projectId)}/download-mp4`, filename);
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Could not download the final MP4.');
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const handleRenderFinalMp4 = async (project: CartoonFilmProject) => {
     setBusyAction('render-mp4');
     soundFx.playSlateBeep();
     try {
-      const res = await fetch(`/api/cartoon-projects/${encodeURIComponent(project.id)}/render`, {
+      const res = await projectFetch(`/api/cartoon-projects/${encodeURIComponent(project.id)}/render`, {
         method: 'POST',
       });
       const data = await res.json();
@@ -1588,14 +1623,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
               setActiveStepNumber(legacyStep);
               setWorkspaceView('workflow');
             }}
-            onDownloadMp4={(projectId) => {
-              const a = document.createElement('a');
-              a.href = `/api/cartoon-projects/${encodeURIComponent(projectId)}/download-mp4`;
-              a.download = `${activeProject.name.replace(/[^a-zA-Z0-9_-]+/g, '_')}.mp4`;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-            }}
+            onDownloadMp4={(projectId) => void downloadFinalMp4(projectId, activeProject.renderJob.fileName)}
           />
         )}
 
@@ -2866,14 +2894,14 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = ({
                             </div>
                           </div>
                           {activeProject.renderJob.verified ? (
-                            <a
-                              href={`/api/cartoon-projects/${encodeURIComponent(activeProject.id)}/download-mp4`}
-                              download={activeProject.renderJob.fileName || 'cartoon_film.mp4'}
-                              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold inline-flex items-center gap-1.5 shrink-0"
+                            <button type="button"
+                              onClick={() => void downloadFinalMp4(activeProject.id, activeProject.renderJob.fileName)}
+                              disabled={busyAction === 'download-mp4'}
+                              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold inline-flex items-center gap-1.5 shrink-0 disabled:opacity-45"
                             >
                               <Download className="w-3.5 h-3.5" />
-                              <span>Download Final MP4</span>
-                            </a>
+                              <span>{busyAction === 'download-mp4' ? 'Downloading…' : 'Download Final MP4'}</span>
+                            </button>
                           ) : (
                             <span className="inline-flex items-center gap-1 opacity-50 font-semibold">
                               <Lock className="w-3.5 h-3.5" />
