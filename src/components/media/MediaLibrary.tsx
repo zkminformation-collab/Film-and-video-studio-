@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { FilmProject, StudioModule } from '../../types';
 import { soundFx } from '../../utils/audioSynth';
+import { downloadCartoonProjectMp4 } from '../../utils/cartoonProjectApi';
 import { useAuth, CloudLibraryAsset } from '../../context/AuthContext';
 import { FreeAssetLibraryWorkspace } from './FreeAssetLibraryWorkspace';
 import { isLibraryRenderImage, LibraryVideoComposer } from './LibraryVideoComposer';
@@ -426,8 +427,20 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
     notify(`Inserted "${asset.name}" into Editing Timeline (${trackName} track)!`);
   };
 
-  const handleDownloadAsset = (asset: UniversalAsset) => {
+  const handleDownloadAsset = async (asset: UniversalAsset) => {
     soundFx.playScannerBeep();
+    if (/^\/api\/cartoon-projects\/[^/]+\/download-mp4$/.test(asset.mediaUrl || '')) {
+      if (!firebaseUser?.emailVerified) {
+        notify('Sign in with a verified Studio account to download this project.');
+        return;
+      }
+      try {
+        await downloadCartoonProjectMp4(firebaseUser, asset.mediaUrl!, asset.name);
+      } catch (error) {
+        notify(error instanceof Error ? error.message : 'Could not download the final MP4.');
+      }
+      return;
+    }
     if (!isStoredLibraryMedia(asset.mediaUrl) && asset.category === 'color') {
       let cubeContent = `# Film & Video Studio 3D LUT\n# Title: ${asset.name}\nLUT_3D_SIZE 33\n`;
       for (let r = 0; r < 33; r += 8) {
