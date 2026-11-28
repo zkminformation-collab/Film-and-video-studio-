@@ -258,7 +258,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
   const [newAspect, setNewAspect] = useState<'16:9' | '9:16'>(launch?.short ? '9:16' : '16:9');
 
   // Editable prompt & manual scene editor fields
-  const [promptDraft, setPromptDraft] = useState<string>('');
+  const [storyDraft, setStoryDraft] = useState<{ projectId: string; premise: string }>();
   const [editingSceneNum, setEditingSceneNum] = useState<number | null>(null);
   const [sceneEditTitle, setSceneEditTitle] = useState<string>('');
   const [sceneEditDesc, setSceneEditDesc] = useState<string>('');
@@ -280,6 +280,8 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
   const assetPickerRef = useRef<HTMLInputElement | null>(null);
 
   const activeProject = projects.find((p) => p.id === selectedProjectId) || projects[0] || null;
+  const promptDraft = storyDraft?.projectId === activeProject?.id && storyDraft
+    ? storyDraft.premise : activeProject?.storyPrompt || '';
 
   const showToast = (type: 'success' | 'error' | 'info', text: string) => {
     setNotice({ type, text });
@@ -310,7 +312,6 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
 
   useEffect(() => {
     if (activeProject) {
-      setPromptDraft(activeProject.storyPrompt || '');
       setChapterUrlDraft(activeProject.chapterUrl || '');
       setChapterTitle('');
       setWatchedAllScenesInSession(false);
@@ -472,6 +473,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Could not update the story plan.');
       replaceProjectInState(data.project);
+      if (!suffix) setStoryDraft(undefined);
       if (suffix) setActiveStepNumber(5);
       showToast('success', suffix ? 'Episode or chapter production opened.' : 'Story and scene production plan saved.');
     } catch (error) {
@@ -1909,7 +1911,8 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                       <textarea
                         rows={4}
                         value={promptDraft}
-                        onChange={(e) => setPromptDraft(e.target.value)}
+                        onChange={event => setStoryDraft({ projectId: activeProject.id, premise: event.target.value })}
+                        maxLength={3800}
                         className={`w-full rounded-xl p-3 text-sm outline-none ${inputCls}`}
                       />
                     </div>
@@ -2072,7 +2075,7 @@ const CartoonCreatorWorkspace: React.FC<CartoonCreatorStudioProps & { user: User
                     ) : (
                       <CartoonStoryPlanner key={activeProject.id}
                         title={activeProject.movieTitle || activeProject.name}
-                        premise={activeProject.storyPrompt} plan={activeProject.storyPlan}
+                        premise={promptDraft} plan={activeProject.storyPlan}
                         defaultCount={activeProject.projectType === 'Short Cartoon Video' ? 1 : 3}
                         inputClassName={inputCls} disabled={Boolean(busyAction)}
                         onGenerate={input => handleStoryPlannerRequest('', input)}
