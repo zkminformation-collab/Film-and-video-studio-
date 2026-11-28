@@ -21,9 +21,10 @@ export async function encodePlannedCartoonScene(input: {
   output: string;
   duration: number;
   aspect: string;
+  dimensions?: readonly [number, number];
   effect: CartoonStoryScene['effect'];
 }) {
-  const [width, height] = input.aspect === '9:16' ? [720, 1280] : [1280, 720];
+  const [width, height] = input.dimensions ?? (input.aspect === '9:16' ? [720, 1280] : [1280, 720]);
   const duration = input.duration;
   const fit = 'scale=' + width + ':' + height + ':force_original_aspect_ratio=decrease,' +
     'pad=' + width + ':' + height + ':(ow-iw)/2:(oh-ih)/2,setsar=1';
