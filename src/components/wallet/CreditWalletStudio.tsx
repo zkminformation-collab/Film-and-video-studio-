@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Coins,
   CreditCard,
@@ -215,11 +215,16 @@ export const CreditWalletStudio: React.FC<CreditWalletStudioProps> = ({
   const [calcVoiceMinutes, setCalcVoiceMinutes] = useState<number>(16);
   const [calcMusicTracks] = useState<number>(6);
 
+  const billingRequest = useRef<AbortController | null>(null);
   const fetchBillingState = useCallback(async () => {
+    billingRequest.current?.abort();
+    const controller = new AbortController();
+    billingRequest.current = controller;
     try {
-      const res = await fetch(`/api/payments/state?userId=${encodeURIComponent(effectiveUserId)}`);
+      const headers = firebaseUser ? { Authorization: `Bearer ${await firebaseUser.getIdToken()}` } : undefined;
+      const res = await fetch('/api/payments/state', { headers, signal: controller.signal });
       const data = await res.json();
-      if (data?.success) {
+      if (!controller.signal.aborted && data?.success) {
         if (Array.isArray(data.plans)) setPlans(data.plans);
         if (Array.isArray(data.creditPacks)) setCreditPacks(data.creditPacks);
         if (Array.isArray(data.payments)) setPayments(data.payments);
@@ -229,14 +234,18 @@ export const CreditWalletStudio: React.FC<CreditWalletStudioProps> = ({
         if (data.razorpay?.keyId) setRazorpayKeyId(data.razorpay.keyId);
       }
     } catch (err) {
-      console.warn('Unable to load billing state:', err);
+      if (!controller.signal.aborted) console.warn('Unable to load billing state:', err);
     } finally {
-      setLoadingState(false);
+      if (!controller.signal.aborted) setLoadingState(false);
     }
-  }, [effectiveUserId]);
+  }, [firebaseUser]);
 
   useEffect(() => {
+    setPayments([]);
+    setCreditTransactions([]);
+    setActiveSub(null);
     void fetchBillingState();
+    return () => billingRequest.current?.abort();
   }, [fetchBillingState]);
 
   useEffect(() => {
@@ -497,7 +506,14 @@ export const CreditWalletStudio: React.FC<CreditWalletStudioProps> = ({
 
   const handleDownloadInvoice = async (invoiceId: string) => {
     try {
-      const res = await fetch(`/api/payments/invoice/${encodeURIComponent(invoiceId)}`);
+      if (!firebaseUser) {
+        openAuthModal();
+        return;
+      }
+      const idToken = await firebaseUser.getIdToken();
+      const res = await fetch(`/api/payments/invoice/${encodeURIComponent(invoiceId)}`, {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
       if (!res.ok) throw new Error('Invoice file not found.');
       const html = await res.text();
       const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
