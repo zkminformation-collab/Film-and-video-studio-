@@ -1663,6 +1663,15 @@ export async function uploadCartoonSceneVideo(projectId: string, sceneNumber: nu
   if (file.mime !== 'video/mp4' || file.bytes.length > 10 * 1024 * 1024) {
     throw new Error('Upload an MP4 clip up to 10 MB.');
   }
+  const incomingDigest = createHash('sha256').update(file.bytes).digest('hex');
+  for (const other of project.scenes) {
+    if (other.id === scene.id) continue;
+    const otherPath = plannedAssetPath(other.originalVideoUrl, '.mp4');
+    if (otherPath && createHash('sha256').update(fs.readFileSync(otherPath)).digest('hex') === incomingDigest) {
+      throw new Error(`Scene ${scene.sceneNumber} uses the same MP4 as Scene ${other.sceneNumber}. Upload a different clip for this scene.`);
+    }
+  }
+
   ensureDirs();
   const prefix = 'scene-' + randomUUID();
   const originalName = prefix + '-source.mp4';
@@ -2399,15 +2408,32 @@ export async function renderAndVerifyCartoonMp4(
     }
 
     const { stdout: probeOut } = await execFileAsync('ffprobe', [
-      '-v',
-      'error',
-      '-show_entries',
-      'format=duration',
-      '-of',
-      'default=noprint_wrappers=1:nokey=1',
+      '-v', 'error',
+      '-show_entries', 'format=duration:stream=codec_type,codec_name,width,height,duration',
+      '-of', 'json',
       tempMp4Path,
-    ]);
-    const verifiedDuration = Number.parseFloat(String(probeOut || totalSec).trim()) || totalSec;
+    ], { timeout: 15_000 });
+    const probe = JSON.parse(String(probeOut)) as {
+      format?: { duration?: string };
+      streams?: Array<{ codec_type?: string; codec_name?: string; width?: number; height?: number; duration?: string }>;
+    };
+    const video = probe.streams?.find((stream) => stream.codec_type === 'video');
+    const audio = probe.streams?.find((stream) => stream.codec_type === 'audio');
+    const portrait = existing.aspectRatio === '9:16';
+    const expectedWidth = portrait ? 720 : 1280;
+    const expectedHeight = portrait ? 1280 : 720;
+    if (video?.codec_name !== 'h264' || video.width !== expectedWidth || video.height !== expectedHeight) {
+      throw new Error(`Rendered video is missing H.264 at ${expectedWidth}×${expectedHeight}.`);
+    }
+    if (audio?.codec_name !== 'aac') {
+      throw new Error('Rendered video is missing its AAC audio track.');
+    }
+    const verifiedDuration = Number(probe.format?.duration);
+    if (![verifiedDuration, Number(video.duration), Number(audio.duration)].every(
+      (duration) => Number.isFinite(duration) && Math.abs(duration - totalSec) <= 0.5,
+    )) {
+      throw new Error('Rendered video or audio duration does not match the scene timeline.');
+    }
 
     const latest = getCartoonProject(projectId);
     if (!latest) throw new Error('Cartoon project was deleted during rendering.');
