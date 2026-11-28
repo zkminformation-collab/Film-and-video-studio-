@@ -85,7 +85,7 @@ export function createStudioMediaAccess(viewer: Viewer | undefined, projects: Pr
     index(project.thumbnailUrl, project);
     for (const asset of project.referenceImages || []) index(asset.url, project);
     for (const scene of project.scenes || []) {
-      for (const url of [scene.storyImageUrl, scene.originalImageUrl, scene.videoClipUrl, scene.dialogueAudioUrl, scene.soundtrackUrl]) {
+      for (const url of [scene.storyImageUrl, scene.originalImageUrl, scene.originalVideoUrl, scene.videoClipUrl, scene.dialogueAudioUrl, scene.soundtrackUrl]) {
         index(url, project);
       }
     }

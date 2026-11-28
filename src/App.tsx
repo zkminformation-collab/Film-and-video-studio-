@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StudioModule, ViewPlatform, FilmProject, StudioTheme } from './types';
+import { StudioModule, ViewPlatform, FilmProject, StudioTheme, type StoryVideoTimeline } from './types';
 import { INITIAL_FILMS } from './data/initialData';
 import { StudioAiProvider, useStudioAi } from './context/StudioAiContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -28,7 +28,6 @@ import { CharacterCreator } from './components/ai/CharacterCreator';
 import { AiVoiceStudio } from './components/ai/AiVoiceStudio';
 import { ColorGradingStudio } from './components/color/ColorGradingStudio';
 import { CloudStorageStudio } from './components/cloud/CloudStorageStudio';
-import { AiFilmWizard } from './components/ai/AiFilmWizard';
 import { AiCentralManager } from './components/ai/AiCentralManager';
 import { PromptLibraryStudio } from './components/ai/PromptLibraryStudio';
 import { CreditWalletStudio } from './components/wallet/CreditWalletStudio';
@@ -41,7 +40,7 @@ import { DeliverablesPanel } from './components/views/DeliverablesPanel';
 import { SocialMediaStudio } from './components/social/SocialMediaStudio';
 import { BloggerStudio } from './components/blogger/BloggerStudio';
 import { ManhwaStudio } from './components/manhwa/ManhwaStudio';
-import { CartoonCreatorStudio } from './components/cartoon/CartoonCreatorStudio';
+import { CartoonCreatorStudio, type StoryVideoLaunch } from './components/cartoon/CartoonCreatorStudio';
 import { soundFx } from './utils/audioSynth';
 
 const STORAGE_FILMS_KEY = 'fvs_autosave_films_v1';
@@ -79,6 +78,9 @@ function StudioApp() {
     }
   });
   const [activeModule, setActiveModule] = useState<StudioModule>('dashboard');
+  const [storyVideoLaunch, setStoryVideoLaunch] = useState<StoryVideoLaunch>();
+  const [storyVideoTimeline, setStoryVideoTimeline] = useState<StoryVideoTimeline>();
+  const [resumeStoryProjectId, setResumeStoryProjectId] = useState<string>();
   const [currentPlatform, setCurrentPlatform] = useState<ViewPlatform>('workstation');
   const [theme, setTheme] = useState<StudioTheme>('elevenlabs');
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
@@ -176,10 +178,23 @@ function StudioApp() {
 
   const handleSelectModule = (mod: StudioModule) => {
     soundFx.playScannerBeep();
+    setStoryVideoLaunch(undefined);
+    setStoryVideoTimeline(undefined);
+    setResumeStoryProjectId(undefined);
     setActiveModule(mod);
     if (currentPlatform !== 'workstation') {
       setCurrentPlatform('workstation');
     }
+  };
+
+  const handleStartStoryVideo = (module: 'ai_wizard' | 'cartoon_creator', launch: StoryVideoLaunch) => {
+    handleSelectModule(module);
+    setStoryVideoLaunch(launch);
+  };
+
+  const handleSelectStudioTool = (module: StudioModule) => {
+    if (module === 'ai_video') handleStartStoryVideo('ai_wizard', { premise: '', short: true });
+    else handleSelectModule(module);
   };
 
   return (
@@ -262,7 +277,7 @@ function StudioApp() {
           <>
             <Sidebar
               activeModule={activeModule}
-              onSelectModule={handleSelectModule}
+              onSelectModule={handleSelectStudioTool}
               theme={theme}
               collapsed={sidebarCollapsed}
               onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
@@ -282,7 +297,7 @@ function StudioApp() {
             />
 
             <main className={`flex-1 flex flex-col overflow-hidden ${theme === 'elevenlabs' ? 'bg-white' : 'bg-slate-950'}`}>
-              {!activeFilm && activeModule !== 'settings' && activeModule !== 'media' && activeModule !== 'ai_manager' && activeModule !== 'prompt_library' && activeModule !== 'credit_wallet' && (
+              {!activeFilm && !storyVideoTimeline && activeModule !== 'ai_wizard' && activeModule !== 'cartoon_creator' && activeModule !== 'settings' && activeModule !== 'media' && activeModule !== 'ai_manager' && activeModule !== 'prompt_library' && activeModule !== 'credit_wallet' && (
                 <div className={`flex-1 flex items-center justify-center p-8 ${theme === 'elevenlabs' ? 'bg-white' : 'bg-[#090b11]'}`}>
                   <div className={`max-w-md w-full border rounded-2xl p-6 text-center space-y-4 shadow-xl ${
                     theme === 'elevenlabs' ? 'bg-[#FAFAFB] border-neutral-200 text-neutral-900' : 'bg-[#0d111c] border-slate-800 text-slate-100'
@@ -323,7 +338,8 @@ function StudioApp() {
                   onSelectFilm={handleSelectFilm}
                   onDeleteFilm={handleDeleteFilm}
                   onCreateNewFilm={handleCreateNewFilm}
-                  onNavigate={handleSelectModule}
+                  onNavigate={handleSelectStudioTool}
+                  onStartStoryVideo={handleStartStoryVideo}
                   theme={theme}
                 />
               )}
@@ -336,8 +352,11 @@ function StudioApp() {
                 />
               )}
 
-              {activeFilm && activeModule === 'editor' && (
-                <VideoEditor activeFilm={activeFilm} />
+              {(activeFilm || storyVideoTimeline) && activeModule === 'editor' && (
+                <VideoEditor activeFilm={activeFilm} storyTimeline={storyVideoTimeline} onBackToStory={() => {
+                  handleSelectModule('ai_wizard');
+                  setResumeStoryProjectId(storyVideoTimeline?.projectId);
+                }} />
               )}
 
               {activeFilm && activeModule === 'script' && (
@@ -373,18 +392,18 @@ function StudioApp() {
               )}
 
               {/* AI Creation Suites */}
-              {activeModule === 'cartoon_creator' && (
+              {(activeModule === 'cartoon_creator' || activeModule === 'ai_wizard') && (
                 <CartoonCreatorStudio
+                  key={activeModule + (storyVideoLaunch?.short ? '-short' : '')}
                   theme={theme}
                   onNavigate={handleSelectModule}
-                />
-              )}
-
-              {activeFilm && activeModule === 'ai_wizard' && (
-                <AiFilmWizard
-                  activeFilm={activeFilm}
-                  onOpenEditor={() => handleSelectModule('editor')}
-                  onUpdateFilm={handleUpdateFilm}
+                  filmMaker={activeModule === 'ai_wizard'}
+                  launch={storyVideoLaunch}
+                  resumeProjectId={resumeStoryProjectId}
+                  onOpenStoryTimeline={timeline => {
+                    handleSelectModule('editor');
+                    setStoryVideoTimeline(timeline);
+                  }}
                 />
               )}
 

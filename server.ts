@@ -122,6 +122,8 @@ import {
   openCartoonStoryProduction,
   preparePlannedCartoonMedia,
   uploadCartoonSceneAudio,
+  uploadCartoonSceneImage,
+  uploadCartoonSceneVideo,
   updateCartoonScene,
   runQualityInspection,
   recomputeProjectSteps,
@@ -1793,7 +1795,7 @@ app.get('/api/films', (_req, res) => {
 
 // 2. Get single film project with full scene list
 app.get('/api/films/:id', (req, res) => {
-  const project = filmProjectsDb[req.params.id] || filmProjectsDb['film-kannada-01'];
+  const project = Object.hasOwn(filmProjectsDb, req.params.id) ? filmProjectsDb[req.params.id] : undefined;
   if (!project) {
     return res.status(404).json({ error: 'Film project not found' });
   }
@@ -1813,102 +1815,13 @@ app.delete('/api/films/:id', (req, res) => {
   });
 });
 
-// 3. Create a complete film project (12, 20, 50, or 100 scenes)
-app.post('/api/films/create', async (req, res) => {
-  const {
-    storyPrompt = 'Create a 20-minute Kannada animated adventure film about a courageous young astronomer...',
-    genre = 'Adventure / Animation',
-    language = 'Kannada (ಕನ್ನಡ)',
-    targetSceneCount = 100,
-    targetDuration = '20 minutes',
-    animationStyle = '3D cartoon animation',
-    aspectRatio = '16:9 Cinema',
-    resolution = '1080p Full HD'
-  } = req.body;
-
-  const projectId = `film-${Date.now()}`;
-  const isKannada = language.toLowerCase().includes('kannada');
-  const cleanTitle = isKannada ? 'ಕಾಲದ ಬಾಗಿಲು: ಅನ್ವೇಷಣೆ (The Chronos Gate)' : 'THE CHRONOS GATE: CELESTIAL ODYSSEY';
-
-  const scenes = generateSceneOutline(Number(targetSceneCount) || 100, language, cleanTitle, animationStyle);
-
-  const newProject = {
-    id: projectId,
-    title: cleanTitle,
-    tagline: `An epic ${genre} generated autonomously by Film & Video Studio Ultimate.`,
-    genre,
-    language,
-    status: 'Production',
-    budget: targetSceneCount * 45000,
-    spent: targetSceneCount * 28000,
-    scenesCount: scenes.length,
-    completedScenes: scenes.length,
-    targetDuration,
-    animationStyle,
-    aspectRatio,
-    resolution,
-    fps: 24,
-    coverImage: '/src/assets/images/cinema_sci_fi_scene_1794406566762.jpg',
-    director: 'AI Auto-Director & Creative Showrunner',
-    dp: 'Marcus Sterling (Virtual Cine)',
-    updatedAt: 'Just now',
-    acts: [
-      { act: `Act I (Scenes 1-${Math.floor(scenes.length * 0.25)})`, beat: isKannada ? 'ಕಣಿವೆಯಲ್ಲಿ ನಿಗೂಢ ಸಂಕೇತದ ಆವಿಷ್ಕಾರ' : 'Discovery of the celestial anomaly', duration: '25%' },
-      { act: `Act II (Scenes ${Math.floor(scenes.length * 0.25) + 1}-${Math.floor(scenes.length * 0.75)})`, beat: isKannada ? 'ಪ್ರಾಚೀನ ಗೇರ್ ಸಕ್ರಿಯತೆ ಮತ್ತು ಸವಾಲುಗಳು' : 'The activation of the ancient mechanism and trials', duration: '50%' },
-      { act: `Act III (Scenes ${Math.floor(scenes.length * 0.75) + 1}-${scenes.length})`, beat: isKannada ? 'ದ್ವಾರದ ತೆರೆಯುವಿಕೆ ಮತ್ತು ನಕ್ಷತ್ರಯಾನ' : 'Gateway awakening and cosmic transcendence', duration: '25%' },
-    ],
-    characters: [
-      {
-        name: isKannada ? 'Dr. Valerie Chen (ವ್ಯಾಲೆರಿ)' : 'Dr. Valerie Chen',
-        archetype: 'Lead Astronomer & Pathfinder',
-        voiceLang: language,
-        appearance: 'Deep purple flight suit, high-tech scanner visor, sharp focused gaze, seed locked #882194',
-        voiceModel: `ElevenLabs Neural ${language} Alto`
-      },
-      {
-        name: isKannada ? 'Arya-7 (ಆರ್ಯ-7)' : 'Arya-7',
-        archetype: 'Synthetic Navigation Companion',
-        voiceLang: language,
-        appearance: 'Bioluminescent cyan optical sensors, sleek titanium ceramic chassis, seed locked #391024',
-        voiceModel: `ElevenLabs Neural Calm AI`
-      }
-    ],
-    scenes,
-    soundtrack: {
-      scoreCue: `Original orchestral score in D-Minor for ${cleanTitle} featuring majestic brass and ambient synth pads`,
-      ambientFoley: 'Atmospheric winds, deep sub-bass resonance, spatial 3D surround sound',
-    },
-    subtitles: scenes.slice(0, 10).map((s, idx) => ({
-      start: `00:${String(Math.floor(idx * 5 / 60)).padStart(2, '0')}:${String((idx * 5) % 60).padStart(2, '0')},000`,
-      end: `00:${String(Math.floor((idx * 5 + 4) / 60)).padStart(2, '0')}:${String((idx * 5 + 4) % 60).padStart(2, '0')},000`,
-      text: s.dialogue,
-    })),
-    screenplay: `SCENE 1 - EXT. ANCIENT CELESTIAL CREST - NIGHT\n${scenes[0]?.action}\n${scenes[0]?.dialogue}\n\nSCENE 2 - INT. MECHANISM HUB - CONTINUOUS\n${scenes[1]?.action}\n${scenes[1]?.dialogue}`,
-    pipelineStages: [
-      { stage: 1, name: 'Story Prompt', status: 'Completed', provider: 'Studio Prompt Studio' },
-      { stage: 2, name: 'AI Screenplay', status: 'Completed', provider: 'Google Gemini Pro' },
-      { stage: 3, name: 'Characters', status: 'Completed', provider: 'Stability AI SD3' },
-      { stage: 4, name: 'Storyboard', status: 'Completed', provider: 'Midjourney/SD3 Bridge' },
-      { stage: 5, name: 'Shot Planner', status: 'Completed', provider: 'CineMatrix Engine' },
-      { stage: 6, name: 'AI Video Clips', status: 'Completed', provider: 'Runway Gen-3 Alpha' },
-      { stage: 7, name: 'Voice & Lip-Sync', status: 'Completed', provider: 'ElevenLabs Multilingual' },
-      { stage: 8, name: 'Music & Foley', status: 'Completed', provider: 'Audiocraft / Lyria' },
-      { stage: 9, name: 'VFX & Shaders', status: 'Completed', provider: 'WebGL Color Grading' },
-      { stage: 10, name: 'Auto-Timeline', status: 'Completed', provider: 'Timeline Engine V1/A1' },
-      { stage: 11, name: 'Subtitles', status: 'Completed', provider: 'Neural Whisper' },
-      { stage: 12, name: 'Scene Corrections', status: 'Ready', provider: 'Auto-Director Loop' },
-      { stage: 13, name: 'Master Render', status: 'Ready', provider: 'Cloud GPU Node' },
-      { stage: 14, name: 'Download MP4', status: 'Ready', provider: 'Delivery Gateway' },
-    ]
-  };
-
-  filmProjectsDb[projectId] = newProject;
-  res.json({ success: true, project: newProject });
+app.post('/api/films/create', (_req, res) => {
+  res.status(410).json({ success: false, error: 'Open AI Film Maker to create a project from your story.' });
 });
 
 // 4. Phase 2 Feature: Generate and save Screenplay from film story context
 app.post('/api/films/:id/screenplay/generate', async (req, res) => {
-  const project = filmProjectsDb[req.params.id] || filmProjectsDb['film-kannada-01'];
+  const project = Object.hasOwn(filmProjectsDb, req.params.id) ? filmProjectsDb[req.params.id] : undefined;
   if (!project) return res.status(404).json({ error: 'Film project not found' });
 
   const outlineContext = project.scenes?.slice(0, 5).map((s: any) => `${s.heading}: ${s.action}`).join('\n') || '';
@@ -1947,14 +1860,14 @@ Write a high-tension screenplay with scene headings, action, parentheticals and 
 
 // 5. Phase 2 Feature: Retrieve previously generated screenplay
 app.get('/api/films/:id/screenplay', (req, res) => {
-  const project = filmProjectsDb[req.params.id] || filmProjectsDb['film-kannada-01'];
+  const project = Object.hasOwn(filmProjectsDb, req.params.id) ? filmProjectsDb[req.params.id] : undefined;
   if (!project) return res.status(404).json({ error: 'Film not found' });
   res.json({ success: true, screenplay: project.screenplay || '', title: project.title });
 });
 
 // 6. Phase 3 Feature: Character Studio & Storyboard Generator
 app.post('/api/films/:id/storyboard/generate', async (req, res) => {
-  const project = filmProjectsDb[req.params.id] || filmProjectsDb['film-kannada-01'];
+  const project = Object.hasOwn(filmProjectsDb, req.params.id) ? filmProjectsDb[req.params.id] : undefined;
   if (!project) return res.status(404).json({ error: 'Film not found' });
 
   // Break scenes into storyboard panels with consistent character seeds
@@ -1983,7 +1896,7 @@ app.post('/api/films/:id/storyboard/generate', async (req, res) => {
 
 // 7. Per-scene regeneration tool (Correction Loop with appearance lock)
 app.post('/api/films/:id/scenes/:sceneNumber/regenerate', (req, res) => {
-  const project = filmProjectsDb[req.params.id] || filmProjectsDb['film-kannada-01'];
+  const project = Object.hasOwn(filmProjectsDb, req.params.id) ? filmProjectsDb[req.params.id] : undefined;
   if (!project) return res.status(404).json({ error: 'Film not found' });
 
   const scNum = parseInt(req.params.sceneNumber, 10);
@@ -2277,14 +2190,14 @@ app.get('/api/providers/status', (_req, res) => {
       },
       {
         id: 'cloud_gpu',
-        name: 'Cloud GPU Node (H.265 Transcoder)',
-        category: 'Master Render Engine',
-        configured: true,
-        keySource: 'Built-in Hardware Accelerated Node',
-        models: ['ffmpeg-nvenc-hevc', 'libx265-10bit'],
-        status: 'Active & Operational',
-        latency: '15ms',
-        type: 'Hardware Node'
+        name: 'External GPU Video Generation',
+        category: 'Video Generation AI',
+        configured: false,
+        keySource: 'No GPU worker connected',
+        models: [],
+        status: 'Upload generated clips for FFmpeg assembly',
+        latency: 'Unavailable',
+        type: 'External Hardware'
       },
       {
         id: 'razorpay_payments',
@@ -3600,6 +3513,16 @@ cartoonProjectsRouter.post('/:id/sync-library', (req, res) => {
   }
   const syncedLibraryAssets = syncCartoonProjectAssetsToLibrary(project);
   res.json({ success: true, projectId: project.id, syncedLibraryAssets });
+});
+
+cartoonProjectsRouter.post('/:id/scenes/:sceneNumber/:visualType(image|video)', async (req, res) => {
+  try {
+    const upload = req.params.visualType === 'video' ? uploadCartoonSceneVideo : uploadCartoonSceneImage;
+    const project = await upload(req.params.id, Number(req.params.sceneNumber), req.body || {});
+    res.json({ success: true, project, syncedLibraryAssets: syncCartoonProjectAssetsToLibrary(project) });
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error?.message || 'Could not upload the scene media.' });
+  }
 });
 
 cartoonProjectsRouter.post('/:id/scenes/:sceneNumber/:audioType(dialogue-audio|soundtrack)', async (req, res) => {

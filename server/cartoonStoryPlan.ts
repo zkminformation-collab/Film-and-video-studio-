@@ -66,8 +66,8 @@ function makeDraftUnits(request: StoryRequest, settings: StorySettings): Cartoon
       ? premise + '\n“' + unitTitle + '” ಅಧ್ಯಾಯದ ಮುಖ್ಯ ಘಟನೆ. ' + beat
       : premise + '\nIn “' + unitTitle + '”, ' + beat;
     const actions = isKannada
-      ? ['“' + unitTitle + '”ಕ್ಕೆ ಸಂಬಂಧಿಸಿದ ಬದಲಾವಣೆ ಮೊದಲು ಕಾಣುತ್ತದೆ. ಮುಖ್ಯ ಪಾತ್ರ ಪರಿಸ್ಥಿತಿಯನ್ನು ಗಮನಿಸುತ್ತದೆ.', beat, final ? 'ಮುಖ್ಯ ಪಾತ್ರದ ಆಯ್ಕೆಯ ಪರಿಣಾಮ ಕಾಣುತ್ತದೆ. ಆರಂಭದ ಪ್ರಶ್ನೆಗೆ ಉತ್ತರ ಸಿಗುತ್ತದೆ.' : 'ಅವರ ನಿರ್ಧಾರದಿಂದ ಹೊಸ ಸುಳಿವು ಸಿಗುತ್ತದೆ. ಅದು ಮುಂದಿನ ಭಾಗಕ್ಕೆ ದಾರಿ ಮಾಡಿಕೊಡುತ್ತದೆ.']
-      : ['Begin with a visible change tied to “' + unitTitle + '”. The lead pauses to observe it.', beat, final ? 'Show the result of the decision and answer the question posed at the start.' : 'Reveal the consequence as a concrete clue that leads into the next part.'];
+      ? [premise + '\n“' + unitTitle + '”ಕ್ಕೆ ಸಂಬಂಧಿಸಿದ ಬದಲಾವಣೆ ಮೊದಲು ಕಾಣುತ್ತದೆ. ಮುಖ್ಯ ಪಾತ್ರ ಪರಿಸ್ಥಿತಿಯನ್ನು ಗಮನಿಸುತ್ತದೆ.', beat, final ? 'ಮುಖ್ಯ ಪಾತ್ರದ ಆಯ್ಕೆಯ ಪರಿಣಾಮ ಕಾಣುತ್ತದೆ. ಆರಂಭದ ಪ್ರಶ್ನೆಗೆ ಉತ್ತರ ಸಿಗುತ್ತದೆ.' : 'ಅವರ ನಿರ್ಧಾರದಿಂದ ಹೊಸ ಸುಳಿವು ಸಿಗುತ್ತದೆ. ಅದು ಮುಂದಿನ ಭಾಗಕ್ಕೆ ದಾರಿ ಮಾಡಿಕೊಡುತ್ತದೆ.']
+      : [premise + '\nBegin with a visible change tied to “' + unitTitle + '”. The lead pauses to observe it.', beat, final ? 'Show the result of the decision and answer the question posed at the start.' : 'Reveal the consequence as a concrete clue that leads into the next part.'];
     const dialogue = isKannada
       ? ['ಈ ಬದಲಾವಣೆಯನ್ನು ಮೊದಲು ಗಮನಿಸಿ. ಏನೋ ಹೊಸದು ಕಾಣುತ್ತಿದೆ.', 'ನಾವು ಕಂಡ ಗುರುತುಗಳನ್ನು ಒಟ್ಟಿಗೆ ನೋಡೋಣ. ಉತ್ತರ ಇಲ್ಲಿಯೇ ಇರಬಹುದು.', final ? 'ಈಗ ನಮಗೆ ಉತ್ತರ ಗೊತ್ತಾಯಿತು. ನಾವು ಇದನ್ನು ಒಟ್ಟಿಗೆ ಸಾಧಿಸಿದೆವು.' : 'ಈ ಸುಳಿವು ನಮ್ಮನ್ನು ಮುಂದೆ ಕರೆದೊಯ್ಯುತ್ತದೆ. ಬನ್ನಿ, ನೋಡೋಣ.']
       : ['Look closely. Something has changed.', 'Let’s put the clues together. The answer might be here.', final ? 'We found the answer because we worked together.' : 'This clue gives us somewhere to go. Let’s find out.'];
@@ -76,7 +76,7 @@ function makeDraftUnits(request: StoryRequest, settings: StorySettings): Cartoon
       location: locations[sceneIndex],
       action: actions[sceneIndex],
       framing: (['Establishing', 'Medium Shot', 'Close-up'] as const)[sceneIndex],
-      imagePrompt: [settings.style, request.title, unitTitle, premise, locations[sceneIndex], actions[sceneIndex], 'Consistent character design, clean readable silhouettes, no text, ' + settings.aspect].join('. '),
+      imagePrompt: [settings.style, request.title, unitTitle, ...(sceneIndex === 0 ? [] : [premise]), locations[sceneIndex], actions[sceneIndex], 'Consistent character design, clean readable silhouettes, no text, ' + settings.aspect].join('. '),
       dialogue: dialogue[sceneIndex],
       audioDirection: sfx[sceneIndex],
       effectsDirection: vfx[sceneIndex],

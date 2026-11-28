@@ -34,7 +34,7 @@ import {
   Zap,
   Repeat
 } from 'lucide-react';
-import { TimelineClip, FilmProject, CostEstimate } from '../../types';
+import { TimelineClip, FilmProject, CostEstimate, type StoryVideoTimeline } from '../../types';
 import { INITIAL_TIMELINE_CLIPS } from '../../data/initialData';
 import { soundFx } from '../../utils/audioSynth';
 import { useStudioAi } from '../../context/StudioAiContext';
@@ -42,12 +42,13 @@ import { handleImageError } from '../../utils/imageUtils';
 import { BuiltinProductionLibrary } from '../media/BuiltinProductionLibrary';
 import { builtinProductionAssets, type BuiltinProductionAsset } from '../../data/builtinProductionAssets';
 
-const isPackMedia = (clip?: TimelineClip) => {
+const isPlayableMedia = (clip?: TimelineClip) => {
   const url = clip?.assetUrl ?? '';
-  return url.startsWith('/assets/production-pack/') || (url.startsWith('/api/production-pack/') && url.endsWith('.wav'));
+  return url.startsWith('/assets/production-pack/') || (url.startsWith('/api/production-pack/') && url.endsWith('.wav')) ||
+    (url.startsWith('/api/cartoon-assets/') && /\.(?:mp4|wav)$/i.test(url));
 };
 
-function PackTimelineMedia({ clip, time, playing, opacity }: { clip: TimelineClip; time: number; playing: boolean; opacity?: number }) {
+function PlayableTimelineMedia({ clip, time, playing, opacity }: { clip: TimelineClip; time: number; playing: boolean; opacity?: number }) {
   const element = useRef<HTMLMediaElement | null>(null);
   const [failed, setFailed] = useState(false);
   const sync = () => {
@@ -72,7 +73,9 @@ function PackTimelineMedia({ clip, time, playing, opacity }: { clip: TimelineCli
 }
 
 interface VideoEditorProps {
-  activeFilm: FilmProject;
+  activeFilm: FilmProject | null;
+  storyTimeline?: StoryVideoTimeline;
+  onBackToStory: () => void;
 }
 
 type EditorTab = 'timeline' | 'tracks' | 'effects' | 'transitions' | 'export';
@@ -87,17 +90,19 @@ interface VideoTrackMeta {
   opacity: number;
 }
 
-export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
+export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm, storyTimeline, onBackToStory }) => {
   const { wallet, requestCostApproval, addQueueItem, queuedEditorClips, consumeQueuedEditorClips } = useStudioAi();
 
-  const [clips, setClips] = useState<TimelineClip[]>(INITIAL_TIMELINE_CLIPS);
-  const hasPackAudio = clips.some((clip) => clip.type === 'audio' && isPackMedia(clip));
-  const [selectedClipId, setSelectedClipId] = useState<string | null>('clip-1');
-  const [currentTime, setCurrentTime] = useState<number>(3.2); // seconds
+  const demo = !storyTimeline && activeFilm?.id === 'film-1';
+  const title = storyTimeline?.title || activeFilm?.title || 'Timeline';
+  const [clips, setClips] = useState<TimelineClip[]>(() => storyTimeline?.clips || (demo ? INITIAL_TIMELINE_CLIPS : []));
+  const hasPlayableAudio = clips.some((clip) => clip.type === 'audio' && isPlayableMedia(clip));
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(clips[0]?.id || null);
+  const [currentTime, setCurrentTime] = useState<number>(demo ? 3.2 : 0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [zoomLevel, setZoomLevel] = useState<number>(34); // px per second
   const [activeLut, setActiveLut] = useState<string>('teal-orange');
-  const [aspectRatio, setAspectRatio] = useState<string>(activeFilm.aspectRatio || '2.39:1');
+  const [aspectRatio, setAspectRatio] = useState<string>(storyTimeline?.aspectRatio || activeFilm?.aspectRatio || '2.39:1');
   const [activeTab, setActiveTab] = useState<EditorTab>('timeline');
   const [isLooping, setIsLooping] = useState<boolean>(true);
   const [showSafeZones, setShowSafeZones] = useState<boolean>(true);
@@ -130,18 +135,20 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
   const timelineContainerRef = useRef<HTMLDivElement>(null);
   const playheadInterval = useRef<any>(null);
 
-  const [totalDuration, setTotalDuration] = useState<number>(24.0); // seconds
+  const [totalDuration, setTotalDuration] = useState<number>(() => storyTimeline
+    ? Math.max(1, ...storyTimeline.clips.map(clip => clip.start + clip.duration)) : 24);
   const [importedFilmInfo, setImportedFilmInfo] = useState<string | null>(null);
 
   const handleLoadFilmScenes = async (projectToLoad?: FilmProject) => {
     const proj = projectToLoad || activeFilm;
+    if (!proj || storyTimeline) return;
     try {
       let scenes = proj.scenes;
       if (!scenes || scenes.length === 0) {
-        const res = await fetch(`/api/films/${proj.id || 'film-kannada-01'}`);
-        const data = await res.json();
-        if (data.project?.scenes) {
-          scenes = data.project.scenes;
+        const res = await fetch(`/api/films/${encodeURIComponent(proj.id === 'film-1' ? 'film-kannada-01' : proj.id)}`);
+        if (res.ok) {
+          const data = await res.json();
+          scenes = data.project?.scenes;
         }
       }
 
@@ -168,7 +175,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
           speed: 1.0,
           volume: 1.0,
           filter: activeLut,
-          assetUrl: sc.videoUrl || (idx % 2 === 0 ? '/src/assets/images/cinema_sci_fi_scene_1794406566762.jpg' : '/src/assets/images/cinema_cyberpunk_alley_1794406568416.jpg'),
+          assetUrl: sc.videoUrl,
         });
 
         // Track Titles: Scene Heading Cards
@@ -224,10 +231,10 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
 
   // Auto-load if activeFilm has scenes or when activeFilm changes
   useEffect(() => {
-    if (activeFilm.scenes && activeFilm.scenes.length > 0) {
+    if (!storyTimeline && activeFilm?.scenes?.length) {
       handleLoadFilmScenes(activeFilm);
     }
-  }, [activeFilm.id, activeFilm.scenes?.length]);
+  }, [activeFilm?.id, activeFilm?.scenes?.length, storyTimeline]);
 
   // Consume assets sent from the Unified Asset Library
   useEffect(() => {
@@ -259,7 +266,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
   // Handle Playback Loop
   useEffect(() => {
     if (isPlaying) {
-      if (!hasPackAudio) soundFx.startScorePlayback(0.45);
+      if (demo && !hasPlayableAudio) soundFx.startScorePlayback(0.45);
       playheadInterval.current = setInterval(() => {
         setCurrentTime((prev) => {
           const next = prev + 0.05;
@@ -290,7 +297,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
       soundFx.stopScorePlayback();
       if (playheadInterval.current) clearInterval(playheadInterval.current);
     };
-  }, [isPlaying, isLooping, inPoint, outPoint, totalDuration, hasPackAudio]);
+  }, [isPlaying, isLooping, inPoint, outPoint, totalDuration, hasPlayableAudio, demo]);
 
   // Periodic autosave simulation
   useEffect(() => {
@@ -457,7 +464,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
     const track = tracks.find((item) => item.id === clip.trackId);
     return !track?.muted && (!tracks.some((item) => item.solo) || Boolean(track?.solo));
   };
-  const activePackClips = clips.filter((clip) => isPackMedia(clip) && audibleOrVisible(clip) &&
+  const activePlayableClips = clips.filter((clip) => isPlayableMedia(clip) && audibleOrVisible(clip) &&
     currentTime >= clip.start && currentTime < clip.start + clip.duration);
 
   function addProductionAsset(asset: BuiltinProductionAsset) {
@@ -485,14 +492,14 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
           <div className="flex items-center gap-2">
             <Film className="w-4 h-4 text-purple-400" />
             <span className="text-xs font-bold text-white tracking-wide">
-              {activeFilm.title}
+              {title}
             </span>
           </div>
-          <span className="text-slate-600 text-xs">/</span>
+          {!storyTimeline && <><span className="text-slate-600 text-xs">/</span>
           <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-mono">
             <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span>Autosaved {lastAutosave}</span>
-          </div>
+          </div></>}
           <span className="text-slate-600 text-xs hidden sm:inline">·</span>
           <span className="text-[10px] text-purple-300/80 bg-purple-950/60 border border-purple-800/50 px-2 py-0.5 rounded font-mono hidden md:inline">
             ACEScc 32-bit Float
@@ -537,13 +544,17 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
               ✓ Synced: {importedFilmInfo}
             </span>
           )}
-          <button
+          {storyTimeline ? (
+            <button type="button" onClick={onBackToStory} className="rounded-lg border border-purple-500/40 px-3 py-1 text-xs font-semibold">
+              Back to Step 14
+            </button>
+          ) : <><button
             onClick={() => handleLoadFilmScenes()}
             className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 transition-all active:scale-95"
             title="Import all scenes from active film project into timeline"
           >
             <Layers className="w-3.5 h-3.5" />
-            <span>Load Scenes ({activeFilm.scenesCount || 100})</span>
+            <span>Load Scenes ({activeFilm?.scenesCount ?? 0})</span>
           </button>
           <button
             onClick={() => {
@@ -555,7 +566,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
           >
             <Sparkles className="w-3.5 h-3.5 animate-spin" style={{ animationDuration: '4s' }} />
             <span>AI Shot Gen</span>
-          </button>
+          </button></>}
         </div>
       </div>
 
@@ -576,8 +587,8 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
             }`}
           >
             {/* Live Visual Media Preview */}
-            <img
-              src={(!isPackMedia(currentVideoClip) && currentVideoClip?.assetUrl) || '/assets/images/cinema_sci_fi_scene_1794406566762.jpg'}
+            {currentVideoClip?.assetUrl && !isPlayableMedia(currentVideoClip) && audibleOrVisible(currentVideoClip) && <img
+              src={currentVideoClip.assetUrl}
               alt="Program Monitor"
               referrerPolicy="no-referrer"
               onError={(e) => handleImageError(e, currentVideoClip?.name || 'Program Monitor', 1)}
@@ -594,10 +605,10 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
                   ? 'sepia-50 saturate-125'
                   : ''
               }`}
-            />
+            />}
 
-            {[...activePackClips.filter((clip) => clip.trackId !== 'v2'), ...activePackClips.filter((clip) => clip.trackId === 'v2')].map((clip) =>
-              <PackTimelineMedia key={clip.id} clip={clip} time={currentTime} playing={isPlaying}
+            {[...activePlayableClips.filter((clip) => clip.trackId !== 'v2'), ...activePlayableClips.filter((clip) => clip.trackId === 'v2')].map((clip) =>
+              <PlayableTimelineMedia key={clip.id} clip={clip} time={currentTime} playing={isPlaying}
                 opacity={tracks.find((track) => track.id === clip.trackId)?.opacity} />
             )}
             {/* Simulated 35mm Film Grain / Vignette overlay */}
@@ -611,16 +622,16 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
             )}
 
             {/* On-Screen Title Preview */}
-            {currentTime >= 1.0 && currentTime <= 5.5 && (
+            {demo && currentTime >= 1.0 && currentTime <= 5.5 && (
               <div className="absolute inset-x-0 bottom-10 text-center pointer-events-none">
                 <span className="text-xl md:text-2xl font-cinzel font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-300 via-white to-cyan-300 tracking-[0.25em] drop-shadow-[0_4px_12px_rgba(0,0,0,0.9)]">
-                  THE CHRONOS GATE
+                  {title}
                 </span>
               </div>
             )}
 
             {/* Subtitle burn-in preview */}
-            {currentTime >= 5.6 && currentTime <= 10.0 && (
+            {demo && currentTime >= 5.6 && currentTime <= 10.0 && (
               <div className="absolute inset-x-0 bottom-5 text-center pointer-events-none">
                 <span className="bg-black/80 px-3.5 py-1 rounded-md text-xs md:text-sm font-sans font-medium text-cyan-300 border border-cyan-500/30 shadow-lg">
                   DR. VALERIE: "Telemetry confirm... the frequency is conscious."
@@ -1029,7 +1040,13 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
           )}
 
           {/* TAB 5: EXPORT PRESETS */}
-          {activeTab === 'export' && (
+          {activeTab === 'export' && storyTimeline && (
+            <div className="space-y-3 text-sm">
+              <p>Save scene changes in Step 14. Approve, render and download the MP4 in Steps 15–17.</p>
+              <button className="rounded-lg border border-purple-500/40 px-3 py-1.5" onClick={onBackToStory}>Back to Step 14</button>
+            </div>
+          )}
+          {activeTab === 'export' && !storyTimeline && (
             <div className="space-y-4">
               <div className="flex items-center justify-between border-b border-purple-500/20 pb-2">
                 <span className="text-xs font-semibold uppercase tracking-wider text-purple-300 font-mono">
@@ -1050,7 +1067,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
                       soundFx.playCinematicImpact();
                       addQueueItem({
                         tool: 'Video Editor Master Render',
-                        prompt: `${activeFilm.title} — Cinema DCI 4K ProRes 422 HQ`,
+                        prompt: `${title} — Cinema DCI 4K ProRes 422 HQ`,
                         provider: 'Cloud GPU Node (H.265 / ProRes)',
                         status: 'Completed',
                         progress: 100,
@@ -1074,7 +1091,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
                       soundFx.playScannerBeep();
                       addQueueItem({
                         tool: 'YouTube 4K MP4 Render',
-                        prompt: `${activeFilm.title} — 3840x2160 Rec.709 MP4`,
+                        prompt: `${title} — 3840x2160 Rec.709 MP4`,
                         provider: 'FFmpeg H.264 / H.265 Node',
                         status: 'Completed',
                         progress: 100,
@@ -1098,7 +1115,7 @@ export const VideoEditor: React.FC<VideoEditorProps> = ({ activeFilm }) => {
                       soundFx.playScannerBeep();
                       addQueueItem({
                         tool: 'Vertical 9:16 Reel Export',
-                        prompt: `${activeFilm.title} — 1080x1920 MP4`,
+                        prompt: `${title} — 1080x1920 MP4`,
                         provider: 'FFmpeg H.264 Node',
                         status: 'Completed',
                         progress: 100,

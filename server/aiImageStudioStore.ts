@@ -522,6 +522,7 @@ async function synthesizeWithProvider(params: {
   width: number;
   height: number;
   variantIndex: number;
+  requireGeneratedImage?: boolean;
 }): Promise<{ buffer: Buffer; mimeType: string; ext: string; actualProvider: string }> {
   const requested = params.provider || 'auto';
 
@@ -576,6 +577,10 @@ async function synthesizeWithProvider(params: {
     }
   }
 
+  if (params.requireGeneratedImage) {
+    throw new Error('Scene image generation is unavailable. Upload an image for this scene to continue.');
+  }
+
   const builtIn = await renderBuiltInStudioImage({
     prompt: params.prompt,
     style: params.style,
@@ -602,6 +607,7 @@ export async function generateStudioImages(input: {
   projectName?: string;
   ownerUserId?: string;
   projectMedia?: boolean;
+  requireGeneratedImage?: boolean;
   titlePrefix?: string;
   metadata?: Record<string, string | number | boolean>;
 }): Promise<GeneratedImageRecord[]> {
@@ -640,6 +646,7 @@ export async function generateStudioImages(input: {
       width,
       height,
       variantIndex: i,
+      requireGeneratedImage: input.requireGeneratedImage,
     });
 
     const titleBase = input.titlePrefix || prompt.slice(0, 48).replace(/[^\w\s-]/g, '').trim() || 'AI Studio Image';

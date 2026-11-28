@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import type { StoryVideoLaunch } from '../cartoon/CartoonCreatorStudio';
 import {
   Plus,
   Mic,
@@ -35,6 +36,7 @@ interface StudioDashboardProps {
   onDeleteFilm?: (filmId: string) => void;
   onCreateNewFilm?: () => void;
   onNavigate: (module: StudioModule) => void;
+  onStartStoryVideo: (module: 'ai_wizard' | 'cartoon_creator', launch: StoryVideoLaunch) => void;
   theme: StudioTheme;
 }
 
@@ -76,7 +78,7 @@ const TEMPLATE_CARDS: Array<{
   {
     id: 'tpl-film',
     title: 'Prompt to complete short film',
-    subtitle: 'Turn one concept into screenplay scenes, storyboard frames, and video shots',
+    subtitle: 'Write a screenplay, review its scenes, and produce a video from your story',
     image: '/src/assets/images/cinema_sci_fi_scene_1794406566762.jpg',
     target: 'ai_wizard',
     category: 'AI Film Maker',
@@ -184,6 +186,7 @@ export const StudioDashboard: React.FC<StudioDashboardProps> = ({
   onDeleteFilm,
   onCreateNewFilm,
   onNavigate,
+  onStartStoryVideo,
   theme,
 }) => {
   const { wallet, history } = useStudioAi();
@@ -209,14 +212,14 @@ export const StudioDashboard: React.FC<StudioDashboardProps> = ({
     }
   };
 
-  const handleLaunchFlow = () => {
+  const handleLaunchFlow = (premise = promptText.trim()) => {
     soundFx.playCinematicImpact();
-    if (promptText.trim()) {
-      try {
-        localStorage.setItem('fvs_active_flow_prompt', promptText.trim());
-      } catch {
-        // ignore storage limits
-      }
+    if (composerTarget === 'ai_wizard' || composerTarget === 'cartoon_creator' || composerTarget === 'ai_video') {
+      onStartStoryVideo(composerTarget === 'cartoon_creator' ? 'cartoon_creator' : 'ai_wizard', {
+        premise,
+        short: composerTarget === 'ai_video',
+      });
+      return;
     }
     onNavigate(composerTarget);
   };
@@ -354,6 +357,7 @@ export const StudioDashboard: React.FC<StudioDashboardProps> = ({
           >
             <textarea
               rows={2}
+              maxLength={3800}
               value={promptText}
               onChange={(e) => setPromptText(e.target.value)}
               onKeyDown={(e) => {
@@ -435,7 +439,7 @@ export const StudioDashboard: React.FC<StudioDashboardProps> = ({
 
                 <button
                   type="button"
-                  onClick={handleLaunchFlow}
+                  onClick={() => handleLaunchFlow()}
                   aria-label="Launch selected workflow"
                   className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
                     promptText.trim()
@@ -458,6 +462,10 @@ export const StudioDashboard: React.FC<StudioDashboardProps> = ({
             <button
               type="button"
               onClick={() => {
+                if (composerTarget === 'ai_wizard' || composerTarget === 'cartoon_creator' || composerTarget === 'ai_video') {
+                  handleLaunchFlow('');
+                  return;
+                }
                 if (onCreateNewFilm) {
                   onCreateNewFilm();
                 } else {
