@@ -200,7 +200,7 @@ const QUALITY_CHECK_RULES = [
 ];
 
 export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = (props) => {
-  const { authReady, firebaseUser, openAuthModal } = useAuth();
+  const { authReady, firebaseUser, studioMediaReady, openAuthModal } = useAuth();
   if (!authReady) return <p role="status" className="p-6">Loading studio session…</p>;
   if (!firebaseUser?.emailVerified) {
     return (
@@ -213,6 +213,7 @@ export const CartoonCreatorStudio: React.FC<CartoonCreatorStudioProps> = (props)
       </section>
     );
   }
+  if (!studioMediaReady) return <p role="status" className="p-6">Opening project media session…</p>;
   return <CartoonCreatorWorkspace key={firebaseUser.uid} {...props} user={firebaseUser} />;
 };
 

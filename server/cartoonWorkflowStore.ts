@@ -1697,6 +1697,7 @@ export async function preparePlannedCartoonMedia(
             const [generated] = await generateStudioImages({
               prompt: scene.production.imagePrompt, style: project.animationStyle, aspectRatio: project.aspectRatio,
               resolution: '768px', count: 1, projectId, projectName: project.name, titlePrefix: scene.title,
+              ownerUserId: project.ownerUserId, projectMedia: true,
             });
             original = generated?.url;
             provider = generated?.provider;

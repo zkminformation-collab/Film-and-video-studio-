@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import {
   LIBRARY_VIDEO_EFFECTS, MAX_LIBRARY_VIDEO_IMAGES, VIDEO_EFFECT_MEDIA, VIDEO_SCENE_IMAGE, VIDEO_SOUND_MEDIA,
 } from '../src/data/libraryMediaFormats.ts';
-import { getStoredLibraryAsset, registerExistingLibraryAsset } from './mediaLibraryStore.ts';
+import { getStoredLibraryAsset, registerExistingLibraryAsset, type LibraryUploadedAsset } from './mediaLibraryStore.ts';
 
 const exec = promisify(execFile);
 const fps = 24;
@@ -21,15 +21,19 @@ export class LibraryRenderError extends Error {
   }
 }
 
-function resolveInput(id: unknown, allowed: RegExp, label: string) {
+function resolveInput(id: unknown, allowed: RegExp, label: string, canRead: (asset: LibraryUploadedAsset) => boolean) {
   const item = typeof id === 'string' ? getStoredLibraryAsset(id) : undefined;
-  if (!item || !allowed.test(item.filePath)) {
+  if (!item || !canRead(item.asset) || !allowed.test(item.filePath)) {
     throw new LibraryRenderError(400, label + ' is missing or has an unsupported format. Upload it again or choose another file.');
   }
   return item;
 }
 
-export async function renderLibraryVideo(input: Record<string, unknown>) {
+export async function renderLibraryVideo(input: Record<string, unknown>, access: {
+  canRead: (asset: LibraryUploadedAsset) => boolean;
+  isPrivate: (asset: LibraryUploadedAsset) => boolean;
+  userId?: string;
+}) {
   const { imageIds, overlayId, audioId, effect = 'none', seconds = 3, aspect = '16:9' } = input;
   if (!Array.isArray(imageIds) || !imageIds.length || imageIds.length > MAX_LIBRARY_VIDEO_IMAGES) {
     throw new LibraryRenderError(400, 'Choose between 1 and ' + MAX_LIBRARY_VIDEO_IMAGES + ' uploaded images.');
@@ -43,9 +47,11 @@ export async function renderLibraryVideo(input: Record<string, unknown>) {
     throw new LibraryRenderError(429, 'A library video is rendering. Try again when it finishes.');
   }
 
-  const images = imageIds.map(id => resolveInput(id, VIDEO_SCENE_IMAGE, 'A scene image'));
-  const overlay = overlayId ? resolveInput(overlayId, VIDEO_EFFECT_MEDIA, 'The VFX overlay') : undefined;
-  const audio = audioId ? resolveInput(audioId, VIDEO_SOUND_MEDIA, 'The audio') : undefined;
+  const images = imageIds.map(id => resolveInput(id, VIDEO_SCENE_IMAGE, 'A scene image', access.canRead));
+  const overlay = overlayId ? resolveInput(overlayId, VIDEO_EFFECT_MEDIA, 'The VFX overlay', access.canRead) : undefined;
+  const audio = audioId ? resolveInput(audioId, VIDEO_SOUND_MEDIA, 'The audio', access.canRead) : undefined;
+  const usesPrivateMedia = [...images, overlay, audio].some(item => item && access.isPrivate(item.asset));
+  if (usesPrivateMedia && !access.userId) throw new LibraryRenderError(401, 'Sign in to render private media.');
   const title = typeof input.title === 'string' && input.title.trim() ? input.title.trim().slice(0, 100) : 'Library video';
   const [width, height] = aspect === '9:16' ? [720, 1280] : [1280, 720];
   const duration = seconds * images.length;
@@ -135,6 +141,7 @@ export async function renderLibraryVideo(input: Record<string, unknown>) {
         mimeType: 'video/mp4',
         sizeBytes,
         durationSeconds: duration,
+        ownerUserId: usesPrivateMedia ? access.userId : undefined,
         url: '/api/library-uploads/' + filename,
         thumbnail: images[0].asset.url,
         description: images.length + ' images · ' + duration + ' seconds · ' + LIBRARY_VIDEO_EFFECTS[effect as keyof typeof LIBRARY_VIDEO_EFFECTS],
