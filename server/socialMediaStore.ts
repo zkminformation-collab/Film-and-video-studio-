@@ -580,6 +580,17 @@ export function disconnectAccount(platform: SocialPlatform) {
 }
 
 function advanceJobProgress(jobId: string) {
+  const job = db.social_upload_jobs.find((item) => item.id === jobId);
+  const account = db.social_accounts.find((item) => item.platform === job?.platform);
+  if (job?.platform === 'youtube' && account?.connectionMode === 'live_oauth') {
+    job.status = 'Failed';
+    job.progress = 0;
+    job.publishedUrl = undefined;
+    job.errorMessage = 'Direct YouTube upload is unavailable. Download the verified MP4 and upload it in YouTube Studio.';
+    job.updatedAt = new Date().toISOString();
+    saveDb();
+    return;
+  }
   const steps = [
     { delay: 450, progress: 28, status: 'Uploading' as const },
     { delay: 1000, progress: 64, status: 'Uploading' as const },
