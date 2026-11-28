@@ -210,6 +210,7 @@ import {
 import {
   getRazorpayConfigStatus,
   getSanitizedBillingState,
+  readBillingIdentity,
   updateAdminPricingConfig,
   adjustCustomerCreditsByAdmin,
   adminUpdateSubscriptionStatus,
@@ -3124,13 +3125,25 @@ app.post('/api/manhwa/export-video', async (req, res) => {
 // RAZORPAY PAYMENTS, SUBSCRIPTIONS & INVOICES API
 // ==========================================
 
-app.get('/api/payments/state', (req, res) => {
-  const userId = String(req.query.userId || '').trim();
-  const includeAll = String(req.query.includeAll || '') === 'true';
-  res.json({
-    success: true,
-    ...getSanitizedBillingState(userId, includeAll),
-  });
+app.get('/api/payments/state', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const authorization = req.get('authorization');
+    const identity = await readBillingIdentity(authorization);
+    const includeAll = req.query.includeAll === 'true';
+    if ((authorization || includeAll) && !identity) {
+      return res.status(401).json({ success: false, error: 'Sign in to view private billing information.' });
+    }
+    if (includeAll && !identity?.isAdmin) {
+      return res.status(403).json({ success: false, error: 'Administrator access is required.' });
+    }
+    res.json({
+      success: true,
+      ...getSanitizedBillingState(identity?.userId, includeAll),
+    });
+  } catch {
+    res.status(503).json({ success: false, error: 'Billing verification is temporarily unavailable.' });
+  }
 });
 
 app.put('/api/admin/pricing', async (req, res) => {
@@ -3289,13 +3302,17 @@ app.post('/api/payments/webhook', (req, res) => {
   }
 });
 
-app.get('/api/payments/invoice/:invoiceId', (req, res) => {
-  const html = getInvoiceHtmlById(req.params.invoiceId);
-  if (!html) {
-    return res.status(404).send('Invoice not found.');
+app.get('/api/payments/invoice/:invoiceId', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const identity = await readBillingIdentity(req.get('authorization'));
+    if (!identity) return res.status(401).send('Sign in to download this invoice.');
+    const html = getInvoiceHtmlById(req.params.invoiceId, identity);
+    if (!html) return res.status(404).send('Invoice not found.');
+    res.type('html').send(html);
+  } catch {
+    res.status(503).send('Billing verification is temporarily unavailable.');
   }
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(html);
 });
 
 // ============================================================================
