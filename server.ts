@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { generateFreeScreenplay, ScreenplayProviderError } from './server/openRouterScreenplay.ts';
 import { createCartoonStoryPlan, readCartoonStoryRequest } from './server/cartoonStoryPlan.ts';
+import { canAccessCartoonProject, createCartoonProjectAccessRouter } from './server/cartoonProjectAccess.ts';
 import { LibraryRenderError, renderLibraryVideo } from './server/libraryVideoRenderer.ts';
 import { LIBRARY_MEDIA_FORMATS, type LibraryFileExtension } from './src/data/libraryMediaFormats.ts';
 import { builtinProductionAssets } from './src/data/builtinProductionAssets';
@@ -3318,8 +3319,14 @@ app.get('/api/payments/invoice/:invoiceId', async (req, res) => {
 // ============================================================================
 // Step-by-Step AI Cartoon Film Creator + Quality Checker + Approval + MP4 Render
 // ============================================================================
-app.get('/api/cartoon-projects', (_req, res) => {
-  res.json({ success: true, projects: listCartoonProjects() });
+const cartoonProjectsRouter = createCartoonProjectAccessRouter(readBillingIdentity, getCartoonProject);
+app.use('/api/cartoon-projects', cartoonProjectsRouter);
+
+cartoonProjectsRouter.get('/', (_req, res) => {
+  const projects = listCartoonProjects().filter(project =>
+    canAccessCartoonProject(res.locals.studioViewer, project),
+  );
+  res.json({ success: true, projects });
 });
 
 function synthesizeCartoonDialogue(text: string, language: string) {
@@ -3331,10 +3338,11 @@ function synthesizeCartoonDialogue(text: string, language: string) {
   });
 }
 
-app.post('/api/cartoon-projects', (req, res) => {
+cartoonProjectsRouter.post('/', (req, res) => {
   try {
     const { name, projectType, animationStyle, aspectRatio, language, storyPrompt } = req.body || {};
     const project = createCartoonProject({
+      ownerUserId: res.locals.studioViewer.userId,
       name,
       projectType,
       animationStyle,
@@ -3348,7 +3356,7 @@ app.post('/api/cartoon-projects', (req, res) => {
   }
 });
 
-app.get('/api/cartoon-projects/:id', (req, res) => {
+cartoonProjectsRouter.get('/:id', (req, res) => {
   const project = getCartoonProject(req.params.id);
   if (!project) {
     return res.status(404).json({ success: false, error: 'Project not found.' });
@@ -3356,12 +3364,14 @@ app.get('/api/cartoon-projects/:id', (req, res) => {
   res.json({ success: true, project });
 });
 
-app.delete('/api/cartoon-projects/:id', (req, res) => {
-  const projects = deleteCartoonProject(req.params.id);
+cartoonProjectsRouter.delete('/:id', (req, res) => {
+  const projects = deleteCartoonProject(req.params.id).filter(project =>
+    canAccessCartoonProject(res.locals.studioViewer, project),
+  );
   res.json({ success: true, projects });
 });
 
-app.patch('/api/cartoon-projects/:id', (req, res) => {
+cartoonProjectsRouter.patch('/:id', (req, res) => {
   try {
     const project = updateCartoonProjectMeta(req.params.id, req.body || {});
     res.json({ success: true, project });
@@ -3370,7 +3380,7 @@ app.patch('/api/cartoon-projects/:id', (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/story-plan', async (req, res) => {
+cartoonProjectsRouter.post('/:id/story-plan', async (req, res) => {
   try {
     const project = getCartoonProject(req.params.id);
     if (!project) return res.status(404).json({ success: false, error: 'Cartoon project not found.' });
@@ -3393,7 +3403,7 @@ app.post('/api/cartoon-projects/:id/story-plan', async (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/story-plan/:unitNumber/production', (req, res) => {
+cartoonProjectsRouter.post('/:id/story-plan/:unitNumber/production', (req, res) => {
   try {
     const project = openCartoonStoryProduction(req.params.id, Number(req.params.unitNumber));
     res.json({ success: true, project });
@@ -3402,7 +3412,7 @@ app.post('/api/cartoon-projects/:id/story-plan/:unitNumber/production', (req, re
   }
 });
 
-app.post('/api/cartoon-projects/:id/az-step', async (req, res) => {
+cartoonProjectsRouter.post('/:id/az-step', async (req, res) => {
   try {
     const { azStepNumber, storyPrompt } = req.body || {};
     const stepNum = Number(azStepNumber);
@@ -3430,7 +3440,7 @@ app.post('/api/cartoon-projects/:id/az-step', async (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/assets', (req, res) => {
+cartoonProjectsRouter.post('/:id/assets', (req, res) => {
   try {
     const { assets = [], chapterUrl } = req.body || {};
     const project = addReferenceAssetsToProject(
@@ -3445,7 +3455,7 @@ app.post('/api/cartoon-projects/:id/assets', (req, res) => {
   }
 });
 
-app.delete('/api/cartoon-projects/:id/assets/:assetId', (req, res) => {
+cartoonProjectsRouter.delete('/:id/assets/:assetId', (req, res) => {
   try {
     const project = removeReferenceAssetFromProject(req.params.id, req.params.assetId);
     res.json({ success: true, project });
@@ -3454,7 +3464,7 @@ app.delete('/api/cartoon-projects/:id/assets/:assetId', (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/manhwa-import', async (req, res) => {
+cartoonProjectsRouter.post('/:id/manhwa-import', async (req, res) => {
   try {
     const { chapterUrl = '' } = req.body || {};
     const importResult = await importManhwaChapterFromUrl(String(chapterUrl));
@@ -3486,7 +3496,7 @@ app.post('/api/cartoon-projects/:id/manhwa-import', async (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/run-step', async (req, res) => {
+cartoonProjectsRouter.post('/:id/run-step', async (req, res) => {
   try {
     const { stepNumber, storyPrompt, sceneCount, sceneNumber, restartFailedOnly } = req.body || {};
     const existing = getCartoonProject(req.params.id);
@@ -3534,7 +3544,7 @@ app.post('/api/cartoon-projects/:id/run-step', async (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/sync-library', (req, res) => {
+cartoonProjectsRouter.post('/:id/sync-library', (req, res) => {
   const project = getCartoonProject(req.params.id);
   if (!project) {
     return res.status(404).json({ success: false, error: 'Project not found.' });
@@ -3543,7 +3553,7 @@ app.post('/api/cartoon-projects/:id/sync-library', (req, res) => {
   res.json({ success: true, projectId: project.id, syncedLibraryAssets });
 });
 
-app.post('/api/cartoon-projects/:id/scenes/:sceneNumber/:audioType(dialogue-audio|soundtrack)', async (req, res) => {
+cartoonProjectsRouter.post('/:id/scenes/:sceneNumber/:audioType(dialogue-audio|soundtrack)', async (req, res) => {
   try {
     const project = await uploadCartoonSceneAudio(
       req.params.id, Number(req.params.sceneNumber), req.body || {},
@@ -3555,7 +3565,7 @@ app.post('/api/cartoon-projects/:id/scenes/:sceneNumber/:audioType(dialogue-audi
   }
 });
 
-app.post('/api/cartoon-projects/:id/scenes/:sceneNumber/update', (req, res) => {
+cartoonProjectsRouter.post('/:id/scenes/:sceneNumber/update', (req, res) => {
   try {
     const sceneNumber = Number(req.params.sceneNumber);
     const project = updateCartoonScene(req.params.id, sceneNumber, req.body || {});
@@ -3565,7 +3575,7 @@ app.post('/api/cartoon-projects/:id/scenes/:sceneNumber/update', (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/quality-check', async (req, res) => {
+cartoonProjectsRouter.post('/:id/quality-check', async (req, res) => {
   try {
     const existing = getCartoonProject(req.params.id);
     if (!existing) return res.status(404).json({ success: false, error: 'Project not found.' });
@@ -3591,7 +3601,7 @@ app.post('/api/cartoon-projects/:id/quality-check', async (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/quality-fix', (req, res) => {
+cartoonProjectsRouter.post('/:id/quality-fix', (req, res) => {
   try {
     const { issueId, action = 'auto_fix' } = req.body || {};
     const result = resolveCartoonQualityIssue(req.params.id, String(issueId || ''), action);
@@ -3601,7 +3611,7 @@ app.post('/api/cartoon-projects/:id/quality-fix', (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/approve', (req, res) => {
+cartoonProjectsRouter.post('/:id/approve', (req, res) => {
   try {
     const { watchedFinalPreview } = req.body || {};
     const project = confirmFinalProjectApproval(req.params.id, Boolean(watchedFinalPreview));
@@ -3611,7 +3621,7 @@ app.post('/api/cartoon-projects/:id/approve', (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/render', async (req, res) => {
+cartoonProjectsRouter.post('/:id/render', async (req, res) => {
   try {
     const project = await renderAndVerifyCartoonMp4(req.params.id, synthesizeCartoonDialogue);
     if (project.renderJob?.status === 'failed') {
@@ -3630,7 +3640,7 @@ app.post('/api/cartoon-projects/:id/render', async (req, res) => {
   }
 });
 
-app.get('/api/cartoon-projects/:id/download-mp4', (req, res) => {
+cartoonProjectsRouter.get('/:id/download-mp4', (req, res) => {
   const verified = getVerifiedRenderMp4Path(req.params.id);
   if (!verified) {
     return res.status(404).json({
