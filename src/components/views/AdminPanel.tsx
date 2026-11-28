@@ -160,10 +160,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setAdminTab(initialTab);
   }, [initialTab]);
 
-  const loadAdminBillingState = () => {
-    fetch('/api/payments/state?includeAll=true')
+  useEffect(() => {
+    if (!firebaseUser || !isAdmin) {
+      setAdminPayments([]);
+      setAdminSubscriptions([]);
+      setCreditTransactions([]);
+      setAuditLogs([]);
+      return;
+    }
+    const controller = new AbortController();
+    firebaseUser.getIdToken()
+      .then((idToken) => fetch('/api/payments/state?includeAll=true', {
+        headers: { Authorization: `Bearer ${idToken}` },
+        signal: controller.signal,
+      }))
       .then((r) => r.json())
       .then((d) => {
+        if (controller.signal.aborted || !d?.success) return;
         if (Array.isArray(d?.plans)) setPricingPlans(d.plans);
         if (Array.isArray(d?.creditPacks)) setCreditPacks(d.creditPacks);
         if (Array.isArray(d?.payments)) setAdminPayments(d.payments);
@@ -173,7 +186,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         if (d?.razorpay) setRazorpayStatus(d.razorpay);
       })
       .catch(() => {});
-  };
+    return () => controller.abort();
+  }, [firebaseUser, isAdmin]);
 
   useEffect(() => {
     fetch('/api/providers/status')
@@ -184,8 +198,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         }
       })
       .catch(() => {});
-    loadAdminBillingState();
   }, []);
+
 
   const totalBudget = allFilms.reduce((sum, f) => sum + f.budget, 0);
   const totalSpent = allFilms.reduce((sum, f) => sum + f.spent, 0);

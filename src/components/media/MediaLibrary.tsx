@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { FilmProject, StudioModule } from '../../types';
 import { soundFx } from '../../utils/audioSynth';
+import { downloadCartoonProjectMp4 } from '../../utils/cartoonProjectApi';
 import { useAuth, CloudLibraryAsset } from '../../context/AuthContext';
 import { FreeAssetLibraryWorkspace } from './FreeAssetLibraryWorkspace';
 import { isLibraryRenderImage, LibraryVideoComposer } from './LibraryVideoComposer';
@@ -89,9 +90,14 @@ function fromLibraryRecord(item: LibraryUploadedAsset): UniversalAsset {
   };
 }
 
-export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendToEditor, onNavigate }) => {
+export const MediaLibrary: React.FC<MediaLibraryProps> = (props) => {
+  const { firebaseUser } = useAuth();
+  return <MediaLibraryWorkspace key={firebaseUser?.uid || 'guest'} {...props} />;
+};
+
+const MediaLibraryWorkspace: React.FC<MediaLibraryProps> = ({ activeFilm, onSendToEditor, onNavigate }) => {
   const [libraryView, setLibraryView] = useState<'free_library' | 'studio_vault'>('free_library');
-  const { firebaseUser, cloudAssets, saveLibraryAsset, deleteLibraryAsset } = useAuth();
+  const { firebaseUser, studioMediaReady, cloudAssets, saveLibraryAsset, deleteLibraryAsset } = useAuth();
   const [catalog, setCatalog] = useState<UniversalAsset[]>(COMPLETE_MEDIA_CATALOG);
   const [collections, setCollections] = useState<AssetCollection[]>(INITIAL_COLLECTIONS);
 
@@ -141,7 +147,9 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
 
   // Load persisted server-uploaded assets from Unified Cartoon Production Library
   useEffect(() => {
-    fetch('/api/library/assets')
+    if (firebaseUser?.emailVerified && !studioMediaReady) return;
+    const controller = new AbortController();
+    fetch('/api/library/assets', { signal: controller.signal })
       .then((r) => r.json())
       .then((data) => {
         if (!data?.success || !Array.isArray(data.assets) || data.assets.length === 0) return;
@@ -154,7 +162,8 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
         });
       })
       .catch(() => {});
-  }, []);
+    return () => controller.abort();
+  }, [firebaseUser, studioMediaReady]);
   const [selectedCategory, setSelectedCategory] = useState<AssetCategory | 'all'>('all');
   const [selectedSource, setSelectedSource] = useState<AssetSource | 'all'>('all');
   const [selectedCollection, setSelectedCollection] = useState<string | 'all'>('all');
@@ -191,7 +200,9 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    fetch('/api/library/catalog')
+    if (firebaseUser?.emailVerified && !studioMediaReady) return;
+    const controller = new AbortController();
+    fetch('/api/library/catalog', { signal: controller.signal })
       .then((r) => r.json())
       .then((data) => {
         if (data?.success) {
@@ -202,12 +213,13 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
       .catch(() => {});
 
     return () => {
+      controller.abort();
       if (audioPlayerRef.current) {
         audioPlayerRef.current.pause();
         audioPlayerRef.current = null;
       }
     };
-  }, []);
+  }, [firebaseUser, studioMediaReady]);
 
   // AI Generator Form State
   const [aiPrompt, setAiPrompt] = useState('Epic cinematic establishing drone shot of ancient alien obelisk at golden hour');
@@ -426,8 +438,20 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ activeFilm, onSendTo
     notify(`Inserted "${asset.name}" into Editing Timeline (${trackName} track)!`);
   };
 
-  const handleDownloadAsset = (asset: UniversalAsset) => {
+  const handleDownloadAsset = async (asset: UniversalAsset) => {
     soundFx.playScannerBeep();
+    if (/^\/api\/cartoon-projects\/[^/]+\/download-mp4$/.test(asset.mediaUrl || '')) {
+      if (!firebaseUser?.emailVerified) {
+        notify('Sign in with a verified Studio account to download this project.');
+        return;
+      }
+      try {
+        await downloadCartoonProjectMp4(firebaseUser, asset.mediaUrl!, asset.name);
+      } catch (error) {
+        notify(error instanceof Error ? error.message : 'Could not download the final MP4.');
+      }
+      return;
+    }
     if (!isStoredLibraryMedia(asset.mediaUrl) && asset.category === 'color') {
       let cubeContent = `# Film & Video Studio 3D LUT\n# Title: ${asset.name}\nLUT_3D_SIZE 33\n`;
       for (let r = 0; r < 33; r += 8) {

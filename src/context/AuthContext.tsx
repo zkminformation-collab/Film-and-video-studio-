@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import {
   User,
   onAuthStateChanged,
@@ -88,6 +88,7 @@ interface AuthContextType {
   firebaseUser: User | null;
   account: CloudUserAccount | null;
   authReady: boolean;
+  studioMediaReady: boolean;
   isSigningIn: boolean;
   authError: string | null;
   isAdmin: boolean;
@@ -168,6 +169,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [account, setAccount] = useState<CloudUserAccount | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [mediaSessionUser, setMediaSessionUser] = useState<string | null>(null);
+  const mediaSessionRequest = useRef(Promise.resolve());
+  const studioMediaReady = Boolean(firebaseUser && mediaSessionUser === firebaseUser.uid);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -182,6 +186,40 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     firebaseUser?.emailVerified &&
       (firebaseUser.email === ADMIN_EMAIL || account?.role === 'admin')
   );
+
+  useEffect(() => {
+    if (!authReady) return;
+    let active = true;
+    const refresh = () => {
+      mediaSessionRequest.current = mediaSessionRequest.current.then(async () => {
+        if (!active) return;
+        try {
+          if (!firebaseUser?.emailVerified) {
+            await fetch('/api/studio-media-session', { method: 'DELETE' });
+            if (active) setMediaSessionUser(null);
+            return;
+          }
+          const token = await firebaseUser.getIdToken();
+          if (!active) return;
+          const response = await fetch('/api/studio-media-session', {
+            method: 'POST', headers: { Authorization: `Bearer ${token}` },
+          });
+          if (active) setMediaSessionUser(response.ok ? firebaseUser.uid : null);
+        } catch {
+          if (active) setMediaSessionUser(null);
+        }
+      });
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 4 * 60_000);
+    const refreshOnFocus = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', refreshOnFocus);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', refreshOnFocus);
+    };
+  }, [authReady, firebaseUser]);
 
   // Monitor Auth State
   useEffect(() => {
@@ -570,6 +608,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         firebaseUser,
         account,
         authReady,
+        studioMediaReady,
         isSigningIn,
         authError,
         isAdmin,

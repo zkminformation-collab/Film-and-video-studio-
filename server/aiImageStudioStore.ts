@@ -431,6 +431,8 @@ function saveImageRecord(params: {
   ext: string;
   projectId: string;
   projectName: string;
+  ownerUserId?: string;
+  projectMedia?: boolean;
   title: string;
   prompt: string;
   negativePrompt?: string;
@@ -471,6 +473,8 @@ function saveImageRecord(params: {
     tags: ['AI Image Studio', params.folder, params.style, params.aspectRatio, params.resolution],
     projectId: params.projectId,
     projectName: params.projectName,
+    ownerUserId: params.ownerUserId,
+    projectMedia: params.projectMedia,
     timelineTrack: libCategory === 'character' ? 'Character / Image' : 'Image',
   });
 
@@ -596,6 +600,8 @@ export async function generateStudioImages(input: {
   provider?: AiImageProvider;
   projectId?: string;
   projectName?: string;
+  ownerUserId?: string;
+  projectMedia?: boolean;
   titlePrefix?: string;
   metadata?: Record<string, string | number | boolean>;
 }): Promise<GeneratedImageRecord[]> {
@@ -645,6 +651,8 @@ export async function generateStudioImages(input: {
       ext: out.ext,
       projectId,
       projectName,
+      ownerUserId: input.ownerUserId,
+      projectMedia: input.projectMedia,
       title,
       prompt,
       negativePrompt: input.negativePrompt,

@@ -9,6 +9,10 @@ import { fileURLToPath } from 'url';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { generateFreeScreenplay, ScreenplayProviderError } from './server/openRouterScreenplay.ts';
 import { createCartoonStoryPlan, readCartoonStoryRequest } from './server/cartoonStoryPlan.ts';
+import { canAccessCartoonProject, createCartoonProjectAccessRouter } from './server/cartoonProjectAccess.ts';
+import {
+  clearStudioMediaSession, createStudioMediaAccess, issueStudioMediaSession, studioMediaViewer,
+} from './server/studioMediaAccess.ts';
 import { LibraryRenderError, renderLibraryVideo } from './server/libraryVideoRenderer.ts';
 import { LIBRARY_MEDIA_FORMATS, type LibraryFileExtension } from './src/data/libraryMediaFormats.ts';
 import { builtinProductionAssets } from './src/data/builtinProductionAssets';
@@ -210,6 +214,7 @@ import {
 import {
   getRazorpayConfigStatus,
   getSanitizedBillingState,
+  readBillingIdentity,
   updateAdminPricingConfig,
   adjustCustomerCreditsByAdmin,
   adminUpdateSubscriptionStatus,
@@ -247,7 +252,49 @@ app.use('/assets/images', express.static(path.resolve(__dirname, 'public/assets/
 app.use('/assets/images', express.static(path.resolve(__dirname, 'src/assets/images')));
 app.use('/src/assets', express.static(path.resolve(__dirname, 'src/assets')));
 app.use('/assets', express.static(path.resolve(__dirname, 'public/assets')));
-app.use('/api/cartoon-assets', express.static(path.resolve(process.cwd(), '.data/cartoon-assets')));
+function mediaAccess(req: express.Request) {
+  return createStudioMediaAccess(studioMediaViewer(req), listCartoonProjects(), listLibraryUploadedAssets());
+}
+
+app.post('/api/studio-media-session', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const viewer = await readBillingIdentity(req.get('authorization'));
+    if (!viewer) {
+      clearStudioMediaSession(req, res);
+      return res.sendStatus(401);
+    }
+    issueStudioMediaSession(req, res, viewer);
+    res.sendStatus(204);
+  } catch {
+    res.sendStatus(503);
+  }
+});
+
+app.delete('/api/studio-media-session', (req, res) => {
+  clearStudioMediaSession(req, res);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.sendStatus(204);
+});
+
+function guardStoredMedia(prefix: string): express.RequestHandler {
+  return (req, res, next) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    try {
+      const filename = decodeURIComponent(req.path);
+      if (!/^\/[a-zA-Z0-9_.-]+$/.test(filename) || !mediaAccess(req).allowsUrl(prefix + filename)) {
+        return res.sendStatus(404);
+      }
+      next();
+    } catch {
+      return res.sendStatus(404);
+    }
+  };
+}
+
+app.use('/api/cartoon-assets', guardStoredMedia('/api/cartoon-assets'),
+  express.static(path.resolve(process.cwd(), '.data/cartoon-assets'), { cacheControl: false, fallthrough: false }));
+app.use('/api/library-uploads', guardStoredMedia('/api/library-uploads'));
 app.use('/api/library-uploads', express.static(path.resolve(process.cwd(), '.data/library-uploads'), {
   setHeaders(res, filePath) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -3124,13 +3171,25 @@ app.post('/api/manhwa/export-video', async (req, res) => {
 // RAZORPAY PAYMENTS, SUBSCRIPTIONS & INVOICES API
 // ==========================================
 
-app.get('/api/payments/state', (req, res) => {
-  const userId = String(req.query.userId || '').trim();
-  const includeAll = String(req.query.includeAll || '') === 'true';
-  res.json({
-    success: true,
-    ...getSanitizedBillingState(userId, includeAll),
-  });
+app.get('/api/payments/state', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const authorization = req.get('authorization');
+    const identity = await readBillingIdentity(authorization);
+    const includeAll = req.query.includeAll === 'true';
+    if ((authorization || includeAll) && !identity) {
+      return res.status(401).json({ success: false, error: 'Sign in to view private billing information.' });
+    }
+    if (includeAll && !identity?.isAdmin) {
+      return res.status(403).json({ success: false, error: 'Administrator access is required.' });
+    }
+    res.json({
+      success: true,
+      ...getSanitizedBillingState(identity?.userId, includeAll),
+    });
+  } catch {
+    res.status(503).json({ success: false, error: 'Billing verification is temporarily unavailable.' });
+  }
 });
 
 app.put('/api/admin/pricing', async (req, res) => {
@@ -3289,20 +3348,30 @@ app.post('/api/payments/webhook', (req, res) => {
   }
 });
 
-app.get('/api/payments/invoice/:invoiceId', (req, res) => {
-  const html = getInvoiceHtmlById(req.params.invoiceId);
-  if (!html) {
-    return res.status(404).send('Invoice not found.');
+app.get('/api/payments/invoice/:invoiceId', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const identity = await readBillingIdentity(req.get('authorization'));
+    if (!identity) return res.status(401).send('Sign in to download this invoice.');
+    const html = getInvoiceHtmlById(req.params.invoiceId, identity);
+    if (!html) return res.status(404).send('Invoice not found.');
+    res.type('html').send(html);
+  } catch {
+    res.status(503).send('Billing verification is temporarily unavailable.');
   }
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(html);
 });
 
 // ============================================================================
 // Step-by-Step AI Cartoon Film Creator + Quality Checker + Approval + MP4 Render
 // ============================================================================
-app.get('/api/cartoon-projects', (_req, res) => {
-  res.json({ success: true, projects: listCartoonProjects() });
+const cartoonProjectsRouter = createCartoonProjectAccessRouter(readBillingIdentity, getCartoonProject);
+app.use('/api/cartoon-projects', cartoonProjectsRouter);
+
+cartoonProjectsRouter.get('/', (_req, res) => {
+  const projects = listCartoonProjects().filter(project =>
+    canAccessCartoonProject(res.locals.studioViewer, project),
+  );
+  res.json({ success: true, projects });
 });
 
 function synthesizeCartoonDialogue(text: string, language: string) {
@@ -3314,10 +3383,11 @@ function synthesizeCartoonDialogue(text: string, language: string) {
   });
 }
 
-app.post('/api/cartoon-projects', (req, res) => {
+cartoonProjectsRouter.post('/', (req, res) => {
   try {
     const { name, projectType, animationStyle, aspectRatio, language, storyPrompt } = req.body || {};
     const project = createCartoonProject({
+      ownerUserId: res.locals.studioViewer.userId,
       name,
       projectType,
       animationStyle,
@@ -3331,7 +3401,7 @@ app.post('/api/cartoon-projects', (req, res) => {
   }
 });
 
-app.get('/api/cartoon-projects/:id', (req, res) => {
+cartoonProjectsRouter.get('/:id', (req, res) => {
   const project = getCartoonProject(req.params.id);
   if (!project) {
     return res.status(404).json({ success: false, error: 'Project not found.' });
@@ -3339,12 +3409,14 @@ app.get('/api/cartoon-projects/:id', (req, res) => {
   res.json({ success: true, project });
 });
 
-app.delete('/api/cartoon-projects/:id', (req, res) => {
-  const projects = deleteCartoonProject(req.params.id);
+cartoonProjectsRouter.delete('/:id', (req, res) => {
+  const projects = deleteCartoonProject(req.params.id).filter(project =>
+    canAccessCartoonProject(res.locals.studioViewer, project),
+  );
   res.json({ success: true, projects });
 });
 
-app.patch('/api/cartoon-projects/:id', (req, res) => {
+cartoonProjectsRouter.patch('/:id', (req, res) => {
   try {
     const project = updateCartoonProjectMeta(req.params.id, req.body || {});
     res.json({ success: true, project });
@@ -3353,7 +3425,7 @@ app.patch('/api/cartoon-projects/:id', (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/story-plan', async (req, res) => {
+cartoonProjectsRouter.post('/:id/story-plan', async (req, res) => {
   try {
     const project = getCartoonProject(req.params.id);
     if (!project) return res.status(404).json({ success: false, error: 'Cartoon project not found.' });
@@ -3376,7 +3448,7 @@ app.post('/api/cartoon-projects/:id/story-plan', async (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/story-plan/:unitNumber/production', (req, res) => {
+cartoonProjectsRouter.post('/:id/story-plan/:unitNumber/production', (req, res) => {
   try {
     const project = openCartoonStoryProduction(req.params.id, Number(req.params.unitNumber));
     res.json({ success: true, project });
@@ -3385,7 +3457,7 @@ app.post('/api/cartoon-projects/:id/story-plan/:unitNumber/production', (req, re
   }
 });
 
-app.post('/api/cartoon-projects/:id/az-step', async (req, res) => {
+cartoonProjectsRouter.post('/:id/az-step', async (req, res) => {
   try {
     const { azStepNumber, storyPrompt } = req.body || {};
     const stepNum = Number(azStepNumber);
@@ -3413,12 +3485,16 @@ app.post('/api/cartoon-projects/:id/az-step', async (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/assets', (req, res) => {
+cartoonProjectsRouter.post('/:id/assets', (req, res) => {
   try {
     const { assets = [], chapterUrl } = req.body || {};
     const project = addReferenceAssetsToProject(
       req.params.id,
-      Array.isArray(assets) ? assets : [],
+      Array.isArray(assets)
+        ? assets.filter(asset => typeof asset?.dataUrl === 'string').map(asset => ({
+          name: asset.name, mimeType: asset.mimeType, dataUrl: asset.dataUrl,
+        }))
+        : [],
       chapterUrl
     );
     syncCartoonProjectAssetsToLibrary(project);
@@ -3428,7 +3504,7 @@ app.post('/api/cartoon-projects/:id/assets', (req, res) => {
   }
 });
 
-app.delete('/api/cartoon-projects/:id/assets/:assetId', (req, res) => {
+cartoonProjectsRouter.delete('/:id/assets/:assetId', (req, res) => {
   try {
     const project = removeReferenceAssetFromProject(req.params.id, req.params.assetId);
     res.json({ success: true, project });
@@ -3437,7 +3513,7 @@ app.delete('/api/cartoon-projects/:id/assets/:assetId', (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/manhwa-import', async (req, res) => {
+cartoonProjectsRouter.post('/:id/manhwa-import', async (req, res) => {
   try {
     const { chapterUrl = '' } = req.body || {};
     const importResult = await importManhwaChapterFromUrl(String(chapterUrl));
@@ -3469,7 +3545,7 @@ app.post('/api/cartoon-projects/:id/manhwa-import', async (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/run-step', async (req, res) => {
+cartoonProjectsRouter.post('/:id/run-step', async (req, res) => {
   try {
     const { stepNumber, storyPrompt, sceneCount, sceneNumber, restartFailedOnly } = req.body || {};
     const existing = getCartoonProject(req.params.id);
@@ -3517,7 +3593,7 @@ app.post('/api/cartoon-projects/:id/run-step', async (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/sync-library', (req, res) => {
+cartoonProjectsRouter.post('/:id/sync-library', (req, res) => {
   const project = getCartoonProject(req.params.id);
   if (!project) {
     return res.status(404).json({ success: false, error: 'Project not found.' });
@@ -3526,7 +3602,7 @@ app.post('/api/cartoon-projects/:id/sync-library', (req, res) => {
   res.json({ success: true, projectId: project.id, syncedLibraryAssets });
 });
 
-app.post('/api/cartoon-projects/:id/scenes/:sceneNumber/:audioType(dialogue-audio|soundtrack)', async (req, res) => {
+cartoonProjectsRouter.post('/:id/scenes/:sceneNumber/:audioType(dialogue-audio|soundtrack)', async (req, res) => {
   try {
     const project = await uploadCartoonSceneAudio(
       req.params.id, Number(req.params.sceneNumber), req.body || {},
@@ -3538,7 +3614,7 @@ app.post('/api/cartoon-projects/:id/scenes/:sceneNumber/:audioType(dialogue-audi
   }
 });
 
-app.post('/api/cartoon-projects/:id/scenes/:sceneNumber/update', (req, res) => {
+cartoonProjectsRouter.post('/:id/scenes/:sceneNumber/update', (req, res) => {
   try {
     const sceneNumber = Number(req.params.sceneNumber);
     const project = updateCartoonScene(req.params.id, sceneNumber, req.body || {});
@@ -3548,7 +3624,7 @@ app.post('/api/cartoon-projects/:id/scenes/:sceneNumber/update', (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/quality-check', async (req, res) => {
+cartoonProjectsRouter.post('/:id/quality-check', async (req, res) => {
   try {
     const existing = getCartoonProject(req.params.id);
     if (!existing) return res.status(404).json({ success: false, error: 'Project not found.' });
@@ -3574,7 +3650,7 @@ app.post('/api/cartoon-projects/:id/quality-check', async (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/quality-fix', (req, res) => {
+cartoonProjectsRouter.post('/:id/quality-fix', (req, res) => {
   try {
     const { issueId, action = 'auto_fix' } = req.body || {};
     const result = resolveCartoonQualityIssue(req.params.id, String(issueId || ''), action);
@@ -3584,7 +3660,7 @@ app.post('/api/cartoon-projects/:id/quality-fix', (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/approve', (req, res) => {
+cartoonProjectsRouter.post('/:id/approve', (req, res) => {
   try {
     const { watchedFinalPreview } = req.body || {};
     const project = confirmFinalProjectApproval(req.params.id, Boolean(watchedFinalPreview));
@@ -3594,7 +3670,7 @@ app.post('/api/cartoon-projects/:id/approve', (req, res) => {
   }
 });
 
-app.post('/api/cartoon-projects/:id/render', async (req, res) => {
+cartoonProjectsRouter.post('/:id/render', async (req, res) => {
   try {
     const project = await renderAndVerifyCartoonMp4(req.params.id, synthesizeCartoonDialogue);
     if (project.renderJob?.status === 'failed') {
@@ -3613,7 +3689,7 @@ app.post('/api/cartoon-projects/:id/render', async (req, res) => {
   }
 });
 
-app.get('/api/cartoon-projects/:id/download-mp4', (req, res) => {
+cartoonProjectsRouter.get('/:id/download-mp4', (req, res) => {
   const verified = getVerifiedRenderMp4Path(req.params.id);
   if (!verified) {
     return res.status(404).json({
@@ -3627,17 +3703,41 @@ app.get('/api/cartoon-projects/:id/download-mp4', (req, res) => {
 // ============================================================================
 // Unified Cartoon Production Asset Library API (15 Categories + File Uploads)
 // ============================================================================
+app.use('/api/library', (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.locals.mediaAccess = mediaAccess(req);
+  const input = req.body || {};
+  if (!res.locals.mediaAccess.allowsRecord({
+    project_id: input.project_id || input.projectId,
+    storage_path: input.storage_path,
+    source_url: input.source_url,
+    preview_url: input.preview_url,
+  })) return res.status(404).json({ success: false, error: 'Media is unavailable.' });
+  next();
+});
+
+app.use('/api/library/assets/:asset_id', (req, res, next) => {
+  const id = req.params.asset_id;
+  const asset = getUnifiedMediaAsset(id);
+  const upload = listLibraryUploadedAssets().find(item => item.id === id);
+  const access = res.locals.mediaAccess as ReturnType<typeof mediaAccess>;
+  if ((asset && !access.allowsRecord(asset)) || (upload && !access.allowsRecord(upload))) {
+    return res.status(404).json({ success: false, error: 'Asset not found.' });
+  }
+  next();
+});
+
 app.get('/api/library/catalog', (_req, res) => {
   res.json({
     success: true,
     categories: CARTOON_LIBRARY_CATALOG,
     techStack: PRODUCTION_TECH_STACK,
-    uploadedAssets: listLibraryUploadedAssets(),
+    uploadedAssets: listLibraryUploadedAssets().filter(res.locals.mediaAccess.allowsRecord),
   });
 });
 
 app.get('/api/library/categories', (_req, res) => {
-  const unified = listUnifiedMediaAssets();
+  const unified = listUnifiedMediaAssets().filter(res.locals.mediaAccess.allowsRecord);
   const categories = Object.entries(SUPPORTED_CATEGORY_FORMATS).map(([id, formats]) => ({
     id,
     supportedFormats: formats,
@@ -3647,7 +3747,7 @@ app.get('/api/library/categories', (_req, res) => {
 });
 
 app.get('/api/library/licenses', (_req, res) => {
-  res.json({ success: true, ...getUnifiedLicenseSummary() });
+  res.json({ success: true, ...getUnifiedLicenseSummary(res.locals.mediaAccess.allowsRecord) });
 });
 
 app.get('/api/library/search', (req, res) => {
@@ -3657,13 +3757,18 @@ app.get('/api/library/search', (req, res) => {
     projectId: String(req.query.projectId || req.query.project_id || 'all'),
     license: String(req.query.license || ''),
     commercialUse: String(req.query.commercial_use || ''),
-  });
+  }).filter(res.locals.mediaAccess.allowsRecord);
   res.json({ success: true, count: assets.length, assets });
 });
 
 app.post('/api/library/assets/import', (req, res) => {
   try {
-    const result = importUnifiedMediaAsset(req.body || {});
+    const input = req.body || {};
+    const existing = input.id && getUnifiedMediaAsset(input.id);
+    if (existing && !res.locals.mediaAccess.allowsRecord(existing)) {
+      return res.status(404).json({ success: false, error: 'Asset not found.' });
+    }
+    const result = importUnifiedMediaAsset(input);
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(400).json({ success: false, error: err?.message || 'Asset import failed.' });
@@ -3708,7 +3813,12 @@ app.post('/api/library/assets/upload', (req, res) => {
 
 app.post('/api/library/render-video', async (req, res) => {
   try {
-    const result = await renderLibraryVideo(req.body || {});
+    const access = res.locals.mediaAccess as ReturnType<typeof mediaAccess>;
+    const result = await renderLibraryVideo(req.body || {}, {
+      canRead: access.allowsRecord,
+      isPrivate: access.isPrivateRecord,
+      userId: studioMediaViewer(req)?.userId,
+    });
     res.json({ success: true, ...result });
   } catch (error) {
     if (error instanceof LibraryRenderError) {
@@ -3726,8 +3836,8 @@ app.get('/api/library/assets', (req, res) => {
   const includeDeleted = String(req.query.includeDeleted || '') === 'true';
   res.json({
     success: true,
-    assets: listLibraryUploadedAssets({ category, q, projectId }),
-    unifiedAssets: listUnifiedMediaAssets({ category, q, projectId, includeDeleted }),
+    assets: listLibraryUploadedAssets({ category, q, projectId }).filter(res.locals.mediaAccess.allowsRecord),
+    unifiedAssets: listUnifiedMediaAssets({ category, q, projectId, includeDeleted }).filter(res.locals.mediaAccess.allowsRecord),
   });
 });
 
@@ -3767,6 +3877,9 @@ app.post('/api/library/assets/:asset_id/projects', (req, res) => {
 });
 
 app.delete('/api/library/assets/:asset_id/projects/:project_id', (req, res) => {
+  if (!res.locals.mediaAccess.allowsProject(req.params.project_id)) {
+    return res.status(404).json({ success: false, error: 'Project not found.' });
+  }
   const linked_projects = unlinkAssetFromProject(req.params.asset_id, req.params.project_id);
   return res.json({ success: true, asset_id: req.params.asset_id, linked_projects });
 });
@@ -3802,9 +3915,24 @@ app.delete('/api/library/assets/:id', (req, res) => {
 // AI IMAGE STUDIO — Complete REST API (Text-to-Image, Character, Background,
 // Manhwa, Film Scene, Image-to-Image, AI Editing, Upscaling, Library)
 // ============================================================================
+app.use('/api/images', (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  const access = mediaAccess(req);
+  const input = req.body || {};
+  if (!access.allowsProject(input.projectId) ||
+      !access.allowsUrl(input.sourceImageDataUrl) || !access.allowsUrl(input.referenceImageDataUrl)) {
+    return res.status(404).json({ success: false, error: 'Image is unavailable.' });
+  }
+  res.locals.mediaAccess = access;
+  next();
+});
+
 app.post('/api/images/generate', async (req, res) => {
   try {
-    const images = await generateStudioImages(req.body || {});
+    const input = req.body || {};
+    const images = await generateStudioImages({
+      ...input, ownerUserId: undefined, projectMedia: false,
+    });
     res.json({
       success: true,
       count: images.length,
@@ -3833,7 +3961,7 @@ app.get('/api/images/characters', (req, res) => {
   const projectId = String(req.query.projectId || 'all');
   res.json({
     success: true,
-    characters: listSavedCharacterIdentities(projectId),
+    characters: listSavedCharacterIdentities(projectId).filter(res.locals.mediaAccess.allowsRecord),
   });
 });
 
@@ -3886,8 +4014,8 @@ app.get('/api/images/library', (req, res) => {
   const folder = String(req.query.folder || 'all');
   const projectId = String(req.query.projectId || 'all');
   const q = String(req.query.q || '');
-  const images = listStudioImages({ folder, projectId, q });
-  const characters = listSavedCharacterIdentities(projectId);
+  const images = listStudioImages({ folder, projectId, q }).filter(res.locals.mediaAccess.allowsRecord);
+  const characters = listSavedCharacterIdentities(projectId).filter(res.locals.mediaAccess.allowsRecord);
   res.json({
     success: true,
     images,
@@ -3898,13 +4026,17 @@ app.get('/api/images/library', (req, res) => {
 
 app.get('/api/images/:image_id', (req, res) => {
   const image = getStudioImageById(req.params.image_id);
-  if (!image) {
+  if (!image || !res.locals.mediaAccess.allowsRecord(image)) {
     return res.status(404).json({ success: false, error: 'Image not found.' });
   }
   res.json({ success: true, image });
 });
 
 app.delete('/api/images/:image_id', (req, res) => {
+  const image = getStudioImageById(req.params.image_id);
+  if (!image || !res.locals.mediaAccess.allowsRecord(image)) {
+    return res.status(404).json({ success: false, error: 'Image not found.' });
+  }
   const deleted = deleteStudioImageById(req.params.image_id);
   res.json({ success: true, deleted });
 });

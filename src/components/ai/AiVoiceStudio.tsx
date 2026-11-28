@@ -1,3 +1,4 @@
+import { requestCartoonProject } from '../../utils/cartoonProjectApi';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Play,
@@ -87,7 +88,17 @@ export const AiVoiceStudio: React.FC<AiVoiceStudioProps> = ({ activeFilm }) => {
       })
       .catch(() => {});
 
-    fetch('/api/cartoon-projects')
+
+
+    refreshTtsJobs();
+  }, []);
+
+  useEffect(() => {
+    setProjects([]);
+    setSelectedProjectId('');
+    if (!firebaseUser?.emailVerified) return;
+    const controller = new AbortController();
+    requestCartoonProject(firebaseUser, '/api/cartoon-projects', { signal: controller.signal })
       .then((r) => r.json())
       .then((d) => {
         if (Array.isArray(d?.projects) && d.projects.length > 0) {
@@ -96,9 +107,8 @@ export const AiVoiceStudio: React.FC<AiVoiceStudioProps> = ({ activeFilm }) => {
         }
       })
       .catch(() => {});
-
-    refreshTtsJobs();
-  }, []);
+    return () => controller.abort();
+  }, [firebaseUser]);
 
   useEffect(() => {
     return () => {
