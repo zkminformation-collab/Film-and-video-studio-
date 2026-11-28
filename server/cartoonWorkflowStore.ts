@@ -1663,6 +1663,15 @@ export async function uploadCartoonSceneVideo(projectId: string, sceneNumber: nu
   if (file.mime !== 'video/mp4' || file.bytes.length > 10 * 1024 * 1024) {
     throw new Error('Upload an MP4 clip up to 10 MB.');
   }
+  const incomingDigest = createHash('sha256').update(file.bytes).digest('hex');
+  for (const other of project.scenes) {
+    if (other.id === scene.id) continue;
+    const otherPath = plannedAssetPath(other.originalVideoUrl, '.mp4');
+    if (otherPath && createHash('sha256').update(fs.readFileSync(otherPath)).digest('hex') === incomingDigest) {
+      throw new Error(`Scene ${scene.sceneNumber} uses the same MP4 as Scene ${other.sceneNumber}. Upload a different clip for this scene.`);
+    }
+  }
+
   ensureDirs();
   const prefix = 'scene-' + randomUUID();
   const originalName = prefix + '-source.mp4';
@@ -2288,6 +2297,10 @@ export async function renderAndVerifyCartoonMp4(
   activeCartoonRenders.add(projectId);
   try {
     const scenes = [...existing.scenes].sort((a, b) => a.orderIndex - b.orderIndex);
+    const [landscapeWidth, landscapeHeight] = existing.resolution === '1920x1080' ? [1920, 1080]
+      : existing.resolution === '3840x2160' ? [3840, 2160] : [1280, 720];
+    const [width, height] = existing.aspectRatio === '9:16'
+      ? [landscapeHeight, landscapeWidth] : [landscapeWidth, landscapeHeight];
     const sampleRate = 48000;
     const sceneFiles: { filePath: string; durationSec: number }[] = [];
     const captions: string[] = [];
@@ -2346,7 +2359,7 @@ export async function renderAndVerifyCartoonMp4(
         if (sc.originalVideoUrl && !motion) throw new Error(`Scene ${sc.sceneNumber}: upload the missing source MP4 again.`);
         await encodePlannedCartoonScene({
           source: motion || imagePaths[index], motion: Boolean(motion), output: visualPath, duration: durationSec,
-          aspect: existing.aspectRatio, effect: sc.production.effect,
+          aspect: existing.aspectRatio, dimensions: [width, height], effect: sc.production.effect,
         });
       }
       sceneFiles.push({ filePath: visualPath, durationSec });
@@ -2370,10 +2383,7 @@ export async function renderAndVerifyCartoonMp4(
     fs.writeFileSync(concatListPath, concatBody, 'utf8');
 
     const totalSec = sceneFiles.reduce((sum, s) => sum + s.durationSec, 0);
-    const scaleFilter =
-      existing.aspectRatio === '9:16'
-        ? 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p'
-        : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p';
+    const scaleFilter = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p`;
 
     const subtitlePath = path.join(tempDir, 'captions.srt');
     if (captions.length) fs.writeFileSync(subtitlePath, captions.join('\n\n') + '\n', 'utf8');
@@ -2399,18 +2409,35 @@ export async function renderAndVerifyCartoonMp4(
     }
 
     const { stdout: probeOut } = await execFileAsync('ffprobe', [
-      '-v',
-      'error',
-      '-show_entries',
-      'format=duration',
-      '-of',
-      'default=noprint_wrappers=1:nokey=1',
+      '-v', 'error',
+      '-show_entries', 'format=duration:stream=codec_type,codec_name,width,height,duration',
+      '-of', 'json',
       tempMp4Path,
-    ]);
-    const verifiedDuration = Number.parseFloat(String(probeOut || totalSec).trim()) || totalSec;
+    ], { timeout: 15_000 });
+    const probe = JSON.parse(String(probeOut)) as {
+      format?: { duration?: string };
+      streams?: Array<{ codec_type?: string; codec_name?: string; width?: number; height?: number; duration?: string }>;
+    };
+    const video = probe.streams?.find((stream) => stream.codec_type === 'video');
+    const audio = probe.streams?.find((stream) => stream.codec_type === 'audio');
+    if (video?.codec_name !== 'h264' || video.width !== width || video.height !== height) {
+      throw new Error(`Rendered video is missing H.264 at ${width}×${height}.`);
+    }
+    if (audio?.codec_name !== 'aac') {
+      throw new Error('Rendered video is missing its AAC audio track.');
+    }
+    const verifiedDuration = Number(probe.format?.duration);
+    if (![verifiedDuration, Number(video.duration), Number(audio.duration)].every(
+      (duration) => Number.isFinite(duration) && Math.abs(duration - totalSec) <= 0.5,
+    )) {
+      throw new Error('Rendered video or audio duration does not match the scene timeline.');
+    }
 
     const latest = getCartoonProject(projectId);
     if (!latest) throw new Error('Cartoon project was deleted during rendering.');
+    if (latest.resolution !== existing.resolution || latest.aspectRatio !== existing.aspectRatio) {
+      throw new Error('Export settings changed during rendering. Render the film again.');
+    }
     fs.renameSync(tempMp4Path, outMp4Path);
     const p: CartoonFilmProject = {
       ...latest,
