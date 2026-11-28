@@ -2297,6 +2297,10 @@ export async function renderAndVerifyCartoonMp4(
   activeCartoonRenders.add(projectId);
   try {
     const scenes = [...existing.scenes].sort((a, b) => a.orderIndex - b.orderIndex);
+    const [landscapeWidth, landscapeHeight] = existing.resolution === '1920x1080' ? [1920, 1080]
+      : existing.resolution === '3840x2160' ? [3840, 2160] : [1280, 720];
+    const [width, height] = existing.aspectRatio === '9:16'
+      ? [landscapeHeight, landscapeWidth] : [landscapeWidth, landscapeHeight];
     const sampleRate = 48000;
     const sceneFiles: { filePath: string; durationSec: number }[] = [];
     const captions: string[] = [];
@@ -2355,7 +2359,7 @@ export async function renderAndVerifyCartoonMp4(
         if (sc.originalVideoUrl && !motion) throw new Error(`Scene ${sc.sceneNumber}: upload the missing source MP4 again.`);
         await encodePlannedCartoonScene({
           source: motion || imagePaths[index], motion: Boolean(motion), output: visualPath, duration: durationSec,
-          aspect: existing.aspectRatio, effect: sc.production.effect,
+          aspect: existing.aspectRatio, dimensions: [width, height], effect: sc.production.effect,
         });
       }
       sceneFiles.push({ filePath: visualPath, durationSec });
@@ -2379,10 +2383,7 @@ export async function renderAndVerifyCartoonMp4(
     fs.writeFileSync(concatListPath, concatBody, 'utf8');
 
     const totalSec = sceneFiles.reduce((sum, s) => sum + s.durationSec, 0);
-    const scaleFilter =
-      existing.aspectRatio === '9:16'
-        ? 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p'
-        : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=yuv420p';
+    const scaleFilter = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p`;
 
     const subtitlePath = path.join(tempDir, 'captions.srt');
     if (captions.length) fs.writeFileSync(subtitlePath, captions.join('\n\n') + '\n', 'utf8');
@@ -2419,11 +2420,8 @@ export async function renderAndVerifyCartoonMp4(
     };
     const video = probe.streams?.find((stream) => stream.codec_type === 'video');
     const audio = probe.streams?.find((stream) => stream.codec_type === 'audio');
-    const portrait = existing.aspectRatio === '9:16';
-    const expectedWidth = portrait ? 720 : 1280;
-    const expectedHeight = portrait ? 1280 : 720;
-    if (video?.codec_name !== 'h264' || video.width !== expectedWidth || video.height !== expectedHeight) {
-      throw new Error(`Rendered video is missing H.264 at ${expectedWidth}×${expectedHeight}.`);
+    if (video?.codec_name !== 'h264' || video.width !== width || video.height !== height) {
+      throw new Error(`Rendered video is missing H.264 at ${width}×${height}.`);
     }
     if (audio?.codec_name !== 'aac') {
       throw new Error('Rendered video is missing its AAC audio track.');
@@ -2437,6 +2435,9 @@ export async function renderAndVerifyCartoonMp4(
 
     const latest = getCartoonProject(projectId);
     if (!latest) throw new Error('Cartoon project was deleted during rendering.');
+    if (latest.resolution !== existing.resolution || latest.aspectRatio !== existing.aspectRatio) {
+      throw new Error('Export settings changed during rendering. Render the film again.');
+    }
     fs.renameSync(tempMp4Path, outMp4Path);
     const p: CartoonFilmProject = {
       ...latest,
